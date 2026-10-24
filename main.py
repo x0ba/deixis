@@ -1,6 +1,4 @@
-def main():
-    print("Hello from deixis!")
-
+from deixis.app import main
 
 if __name__ == "__main__":
     main()
