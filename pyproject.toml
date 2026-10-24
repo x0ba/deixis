@@ -1,0 +1,18 @@
+[project]
+name = "deixis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=2.3.0",
+    "cartesia[websockets]>=4.2.0",
+    "mediapipe>=1.1.1",
+    "numpy>=2.5.4",
+    "opencv-python>=5.0.0.93",
+    "pyobjc-framework-applicationservices>=12.2.2",
+    "pyobjc-framework-cocoa>=12.2.2",
+    "pyobjc-framework-quartz>=12.2.2",
+    "python-dotenv>=1.2.4",
+    "sounddevice>=0.5.6",
+]
