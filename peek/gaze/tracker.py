@@ -17,11 +17,13 @@ from peek.gaze import features as feat
 from peek.gaze.filter import OneEuro
 from peek.gaze.history import GazeHistory
 from peek.gaze.model import GazeModel
+from peek.gaze.wink import WinkDetector
 
 log = logging.getLogger(__name__)
 
 PointListener = Callable[[float, float], None]
 FeatureListener = Callable[[float, np.ndarray], None]
+WinkListener = Callable[[float], None]
 
 
 class CameraGaze:
@@ -40,8 +42,10 @@ class CameraGaze:
         self.face_visible = False
         self.on_point: PointListener | None = None
         self.on_features: FeatureListener | None = None
+        self.on_wink: WinkListener | None = None
         self.error: str | None = None
         self._filter = OneEuro()
+        self._wink = WinkDetector()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -110,9 +114,14 @@ class CameraGaze:
     def _handle(self, now: float, result, width: int, height: int) -> None:
         if not result.face_landmarks:
             self.face_visible = False
+            self._wink.reset()
             return
         self.face_visible = True
         blend = {c.category_name: c.score for c in result.face_blendshapes[0]}
+        left, right = blend.get("eyeBlinkLeft", 0.0), blend.get("eyeBlinkRight", 0.0)
+        winked = self._wink.update(now, left, right)
+        if winked is not None and self.on_wink:
+            self.on_wink(winked)
         if feat.is_blinking(blend):
             return
         landmarks = np.array([(p.x, p.y, p.z) for p in result.face_landmarks[0]], dtype=float)

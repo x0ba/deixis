@@ -191,9 +191,12 @@ class FakeSnapper:
 
 def test_saying_the_name_pins_what_they_look_at_until_the_request_is_done(app):
     app.snapper = FakeSnapper()
-    app.listener.turn_started = time.monotonic()
+    started = time.monotonic()
+    app.listener.turn_started = started
     app._on_partial("Peek, close")
-    assert app.snapper.pins == [(None, None)]
+    assert len(app.snapper.pins) == 1
+    start, end = app.snapper.pins[0]
+    assert start < started <= end  # what they looked at since they began talking
     app._on_partial("Peek, close this")
     assert len(app.snapper.pins) == 1
     app.listener.turn_started = None
@@ -204,13 +207,38 @@ def test_saying_the_name_pins_what_they_look_at_until_the_request_is_done(app):
     assert not app.snapper.pinned
 
 
-def test_just_the_name_lets_go_of_the_pin(app):
+def test_just_the_name_holds_the_pin_for_the_request_that_follows(app):
     app.snapper = FakeSnapper()
     app.listener.turn_started = time.monotonic()
     app._on_partial("Peek")
     app.listener.turn_started = None
     hear(app, "Peek")
-    assert app.snapper.pins and not app.snapper.pinned
+    assert app.snapper.pinned and len(app.snapper.pins) == 1
+    app.listener.turn_started = time.monotonic()
+    app._on_partial("make it")
+    app.listener.turn_started = None
+    hear(app, "make it full screen")
+    assert submitted(app) == ["make it full screen"]
+    assert app.snapper.pinned and len(app.snapper.pins) == 1  # not re-pinned
+    app._jobs.clear()
+    app._unpin_if_idle()
+    assert not app.snapper.pinned
+
+
+def test_held_pin_lets_go_when_they_say_never_mind(app):
+    app.snapper = FakeSnapper()
+    hear(app, "Peek")
+    assert app.snapper.pinned
+    hear(app, "never mind")
+    assert not app.snapper.pinned
+
+
+def test_held_pin_lets_go_when_the_conversation_closes(app):
+    app.snapper = FakeSnapper()
+    hear(app, "Peek")
+    assert app.snapper.pinned
+    app._end_conversation(sound=False)
+    assert not app.snapper.pinned
 
 
 def test_follow_ups_pin_what_they_looked_at_while_speaking(app):

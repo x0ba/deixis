@@ -9,6 +9,8 @@ Look at something on your Mac, say what you want, and Peek does it.
 - "Peek, write 'running ten minutes late' here." (looking at a text box)
 - "Peek, what does this say?" / "read this to me"
 - "Peek, scroll down." / "open Safari" / "go to sleep" / "wake up" / "recalibrate" / "re-center"
+- Wink one eye to click whatever is outlined in blue, no words needed (webcam
+  only; turn off with `PEEK_WINK_CLICK=false`).
 
 ### Talking to Peek
 

@@ -31,6 +31,7 @@ class Config:
     barge_in: bool = True
     conversation_s: float = 15.0
     sounds: bool = True
+    wink_click: bool = True
     face_model_path: Path = ROOT / "models" / "face_landmarker.task"
     calibration_path: Path = SUPPORT_DIR / "calibration.npz"
 
@@ -53,4 +54,5 @@ def load_config() -> Config:
         barge_in=_flag("PEEK_BARGE_IN", True),
         conversation_s=float(os.environ.get("PEEK_CONVERSATION_S") or 15),
         sounds=_flag("PEEK_SOUNDS", True),
+        wink_click=_flag("PEEK_WINK_CLICK", True),
     )

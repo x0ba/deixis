@@ -14,6 +14,7 @@ import objc
 from PyObjCTools import AppHelper
 
 from peek import wake
+from peek.actions import input as inp
 from peek.agent.agent import SILENT, Agent
 from peek.agent.tools import Answer
 from peek.config import Config, load_config
@@ -37,6 +38,7 @@ GAZE_LEAD_S = 0.5
 MOUSE_ERROR_PX = 25.0
 UNCALIBRATED_ERROR_PX = 400.0
 SNAP_REACH_PX = (150.0, 360.0)
+WINK_LOOKBACK_S = 0.4  # what was highlighted just before the eye shut
 KEYTERMS = ["Peek", "full screen", "split screen", "minimize", "text box", "re-center"]
 SLEEP = re.compile(r"^(go to sleep|stop listening|sleep|pause)\W*$", re.I)
 WAKE = re.compile(r"^(wake up|start listening|resume|i'm back)\W*$", re.I)
@@ -129,6 +131,7 @@ class GazeApp:
         self._conversation_ended = 0.0
         self._last_reply = ""
         self._name_heard = False  # in the turn being spoken
+        self._held_for_request = False  # said just "Peek": keep the pin for what comes next
         self._status_stamp = 0
         self.listener: Listener | None = None
         self.gaze: CameraGaze | MouseGaze | None = None
@@ -240,6 +243,8 @@ class GazeApp:
         self.snapper = Snapper(lambda: min(max(3 * self.gaze_error_px(), low), high))
         self.snapper.start()
         self.gaze.on_point = self._on_gaze_point
+        if isinstance(self.gaze, CameraGaze) and self.config.wink_click:
+            self.gaze.on_wink = self._on_wink
         self.gaze.start()
         self._camera_item.setState_(1 if source == "camera" else 0)
         self._mouse_item.setState_(1 if source == "mouse" else 0)
@@ -253,6 +258,26 @@ class GazeApp:
         if shown != self._highlighted:
             self._highlighted = shown
             _on_main(self.overlay.highlight, *shown)
+
+    def _on_wink(self, started: float) -> None:
+        """A wink clicks whatever is highlighted, or was just before the eye shut."""
+        snapper = self.snapper
+        if snapper is None or self.sleeping or self._calibrator is not None:
+            return
+        element = snapper.pinned_element() if snapper.pinned else None
+        element = element or snapper.element_during(started - WINK_LOOKBACK_S, started)
+        if element is None:
+            log.info("wink: nothing highlighted to click")
+            return
+        threading.Thread(target=self._wink_click, args=(element,), daemon=True).start()
+
+    def _wink_click(self, element) -> None:
+        if self.config.sounds:
+            _on_main(_play, "Morse")
+        try:
+            log.info("wink: %s", inp.click(element))
+        except Exception as err:
+            log.warning("wink click failed: %s", err)
 
     def switch_gaze(self, source: str) -> None:
         self._start_gaze(source)
@@ -361,6 +386,9 @@ class GazeApp:
             return
         self._conversing = False
         self._conversation_ended = time.monotonic()
+        if self._held_for_request:
+            self._held_for_request = False
+            self._unpin_if_idle()
         self._last_reply = ""
         if sound and self.config.sounds:
             _on_main(_play, "Pop")
@@ -412,11 +440,11 @@ class GazeApp:
             answers.put(None)
         self.speaker.interrupt()
 
-    def _submit(self, job: Job) -> None:
+    def _submit(self, job: Job, held: bool = False) -> None:
         """Run a command. A new request interrupts whatever Peek was doing."""
         self._stop_everything(REPLACED)
         snapper = self.snapper
-        if snapper is not None and not (job.said_name and snapper.pinned):
+        if snapper is not None and not ((job.said_name or held) and snapper.pinned):
             # Follow-ups (and a name the partials missed) pin what they looked at while speaking.
             snapper.pin(job.started - GAZE_LEAD_S, job.ended)
         with self._jobs_lock:
@@ -427,18 +455,24 @@ class GazeApp:
     #
     # When the user says "Peek", the highlight pins to what they're looking at
     # and stays there until the request is done, so they can look away while
-    # Peek works on it. It lets go while Peek asks them something, so they can
+    # they finish speaking and while Peek works on it. Saying just "Peek" and
+    # pausing keeps the pin for the request that follows. It lets go while Peek asks them something, so they can
     # look at their answer, then pins what they looked at.
 
     def _pin(self, start: float | None = None, end: float | None = None) -> None:
         if self.snapper is not None:
             self.snapper.pin(start, end)
+            log.debug("pinned (%s, %s)", start, end)
 
     def _unpin(self) -> None:
-        if self.snapper is not None:
+        self._held_for_request = False
+        if self.snapper is not None and self.snapper.pinned:
             self.snapper.unpin()
+            log.debug("unpinned")
 
     def _unpin_if_idle(self) -> None:
+        if self._held_for_request:
+            return
         user_talking = self.listener is not None and self.listener.turn_started is not None
         if not self._working() and self._answers is None and not user_talking:
             self._unpin()
@@ -463,8 +497,11 @@ class GazeApp:
             return
         if command is not None and not self._name_heard:
             self._name_heard = True
-            if self._answers is None:
-                self._pin()
+            if self._answers is None and not self._held_for_request:
+                # What they looked at since they started talking, not where
+                # their eyes are by the time the transcript catches up.
+                started = self.listener.turn_started or now
+                self._pin(started - GAZE_LEAD_S, now)
         if self.speaker.speaking:
             if not self._wants_the_floor(heard, command):
                 return
@@ -507,9 +544,15 @@ class GazeApp:
             asked = last is not None and last.text.rstrip().endswith("?")
             if is_backchannel(command) and self._answers is None and not asked:
                 return
+        held, self._held_for_request = self._held_for_request, False
         self._open_conversation()
         if not command:
-            # Just the name: stop talking if need be and listen.
+            # Just the name: stop talking if need be and listen, keeping the
+            # pin on what they looked at for the request that follows.
+            if self._answers is None:
+                if self.snapper is not None and not self.snapper.pinned:
+                    self._pin(turn.started - GAZE_LEAD_S, turn.ended)
+                self._held_for_request = True
             self.speaker.interrupt()
             self._show("listening", "Listening…")
             return
@@ -537,7 +580,7 @@ class GazeApp:
             answers.put(Turn(command, turn.started, turn.ended))
             return
         log.info("command: %s", command)
-        self._submit(Job(command, turn.started, turn.ended, said_name))
+        self._submit(Job(command, turn.started, turn.ended, said_name), held)
 
     # commands
 
