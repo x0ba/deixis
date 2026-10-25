@@ -40,6 +40,19 @@ voice out of what the mic hears, but headphones work best. In a loud room,
 or if Peek keeps cutting itself off, set `PEEK_BARGE_IN=false`. Peek then
 can't hear you while it's talking, so you have to wait for it to finish.
 
+## Why we built Peek
+
+Two years ago, one of our teammates visited his grandfather in India over the
+winter. He noticed how hard it was for his grandfather to use a computer and
+do the things he wanted to do. His hands shook with a tremor, which made
+typing and moving around the screen difficult.
+
+His grandfather wanted to put on a movie on Netflix as a surprise for us, but
+he couldn't get it started on his own. We had to help him, which gave away
+the surprise: the movie was one of our favorites. He also wanted to look up
+his sons online, since they had told him they were "internet famous," but he
+couldn't manage that either.
+
 ## How it works
 
 | Piece | What it uses |
