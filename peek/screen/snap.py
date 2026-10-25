@@ -4,6 +4,10 @@ Webcam gaze lands 50-150 px from what the user is looking at and jitters by
 about as much, and on a screen that is nearly always a control or a piece of
 text. So the highlight always sits on something: the element nearest the
 smoothed gaze, kept until another one is clearly closer.
+
+While Peek handles a request the highlight can be pinned: it stays on the
+element the user was looking at when they spoke, so they can look elsewhere
+while Peek works on it. Gaze is still tracked underneath.
 """
 
 import statistics
@@ -179,6 +183,8 @@ class Snapper:
         self._frame = frame
         self._points: deque[tuple[float, float, float]] = deque()
         self._current: _Snap | None = None
+        self._pinned: _Snap | None = None
+        self._pinning = False
         self._past: deque[_Snap] = deque()
         self._queried_at: tuple[float, float] | None = None
         self._checked_at = 0.0
@@ -199,16 +205,44 @@ class Snapper:
             self._points.append((t, x, y))
             while self._points[0][0] < t - 1.0:
                 self._points.popleft()
-            current = self._current
+            shown = self._pinned if self._pinning else self._current
         self._wake.set()
-        return current.rect if current else None
+        return shown.rect if shown else None
+
+    @property
+    def pinned(self) -> bool:
+        return self._pinning
+
+    def pinned_element(self):
+        """The pinned element, or None if nothing is pinned (or it went away)."""
+        with self._lock:
+            return self._pinned.element if self._pinning and self._pinned else None
+
+    def pin(self, start: float | None = None, end: float | None = None) -> None:
+        """Hold the highlight on what's highlighted now, or on the element
+        highlighted longest between `start` and `end`."""
+        with self._lock:
+            snap = self._current
+            if start is not None and end is not None:
+                snap = self._longest(start, end) or snap
+            self._pinned = _Snap(snap.element, snap.rect, snap.frame, snap.start) if snap else None
+            self._pinning = True
+
+    def unpin(self) -> None:
+        with self._lock:
+            self._pinned = None
+            self._pinning = False
 
     def element_during(self, start: float, end: float):
         """The element highlighted longest between `start` and `end`, if any."""
         with self._lock:
-            snaps = [*self._past, *([self._current] if self._current else [])]
+            best = self._longest(start, end)
+        return best.element if best else None
+
+    def _longest(self, start: float, end: float) -> _Snap | None:
+        snaps = [*self._past, *([self._current] if self._current else [])]
         best = max(snaps, key=lambda s: s.overlap(start, end), default=None)
-        return best.element if best is not None and best.overlap(start, end) > 0 else None
+        return best if best is not None and best.overlap(start, end) > 0 else None
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -224,11 +258,15 @@ class Snapper:
             return
         cx = statistics.median(p[1] for p in points)
         cy = statistics.median(p[2] for p in points)
+        if now - self._checked_at >= RECHECK_S:
+            self._checked_at = now
+            if current is not None:
+                self._queried_at = None
+            current = self._recheck_current(now)
+            self._recheck_pinned()
         if current is not None:
             current.end = now
-            if now - self._checked_at >= RECHECK_S:
-                current = self._recheck(current, now)
-            if current is not None and current.rect.contains(cx, cy):
+            if current.rect.contains(cx, cy):
                 return
         if self._queried_at is not None:
             qx, qy = self._queried_at
@@ -246,21 +284,33 @@ class Snapper:
                 return
         self._replace(_Snap(element, rect, self._frame(element), now), now)
 
-    def _recheck(self, current: _Snap, now: float) -> _Snap | None:
-        """Follows the highlighted element when it moves and lets go when it's gone."""
-        self._checked_at = now
-        self._queried_at = None
-        frame = self._frame(current.element)
-        if frame is None or frame.w <= 0 or frame.h <= 0:
+    def _recheck_current(self, now: float) -> _Snap | None:
+        current = self._current
+        if current is not None and not self._follow(current):
             self._replace(None, now)
             return None
-        if frame != current.frame:
-            r, old = current.rect, current.frame
+        return current
+
+    def _recheck_pinned(self) -> None:
+        """The pin stays put when its element goes away; there's just nothing to outline."""
+        pinned = self._pinned
+        if pinned is not None and not self._follow(pinned):
+            with self._lock:
+                if self._pinned is pinned:
+                    self._pinned = None
+
+    def _follow(self, snap: _Snap) -> bool:
+        """Moves `snap` with its element; False if the element is gone."""
+        frame = self._frame(snap.element)
+        if frame is None or frame.w <= 0 or frame.h <= 0:
+            return False
+        if frame != snap.frame:
+            r, old = snap.rect, snap.frame
             moved = Rect(r.x + frame.x - old.x, r.y + frame.y - old.y, r.w, r.h)
             with self._lock:
-                current.rect = frame if r == old else moved
-                current.frame = frame
-        return current
+                snap.rect = frame if r == old else moved
+                snap.frame = frame
+        return True
 
     def _replace(self, snap: _Snap | None, now: float) -> None:
         with self._lock:

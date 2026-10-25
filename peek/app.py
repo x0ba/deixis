@@ -128,11 +128,12 @@ class GazeApp:
         self._conversation_deadline = 0.0
         self._conversation_ended = 0.0
         self._last_reply = ""
+        self._name_heard = False  # in the turn being spoken
         self._status_stamp = 0
         self.listener: Listener | None = None
         self.gaze: CameraGaze | MouseGaze | None = None
         self.snapper: Snapper | None = None
-        self._highlighted: Rect | None = None
+        self._highlighted: tuple[Rect | None, bool] = (None, False)
         self.overlay: Overlay | None = None
 
     # setup
@@ -224,7 +225,7 @@ class GazeApp:
             self.gaze.stop()
         if self.snapper is not None:
             self.snapper.stop()
-        self._highlighted = None
+        self._highlighted = (None, False)
         self.overlay.highlight(None)
         if source == "camera":
             self.gaze = CameraGaze(
@@ -248,10 +249,10 @@ class GazeApp:
         snapper = self.snapper
         if snapper is None:
             return
-        rect = snapper.update(time.monotonic(), x, y)
-        if rect != self._highlighted:
-            self._highlighted = rect
-            _on_main(self.overlay.highlight, rect)
+        shown = (snapper.update(time.monotonic(), x, y), snapper.pinned)
+        if shown != self._highlighted:
+            self._highlighted = shown
+            _on_main(self.overlay.highlight, *shown)
 
     def switch_gaze(self, source: str) -> None:
         self._start_gaze(source)
@@ -263,7 +264,7 @@ class GazeApp:
         self._highlight_item.setState_(1 if on else 0)
         self.overlay.set_highlight_enabled(on)
         if on:
-            self.overlay.highlight(self._highlighted)
+            self.overlay.highlight(*self._highlighted)
 
     def gaze_error_px(self) -> float:
         if isinstance(self.gaze, MouseGaze):
@@ -335,6 +336,7 @@ class GazeApp:
         if sleeping:
             self._stop_everything(STOPPED)
             self._end_conversation(sound=False)
+            self._unpin()
             self.speaker.say(goodbye)
             self._show("idle", "Sleeping. Say “Peek, wake up.”")
         else:
@@ -413,9 +415,33 @@ class GazeApp:
     def _submit(self, job: Job) -> None:
         """Run a command. A new request interrupts whatever Peek was doing."""
         self._stop_everything(REPLACED)
+        snapper = self.snapper
+        if snapper is not None and not (job.said_name and snapper.pinned):
+            # Follow-ups (and a name the partials missed) pin what they looked at while speaking.
+            snapper.pin(job.started - GAZE_LEAD_S, job.ended)
         with self._jobs_lock:
             self._jobs.append(job)
         self._commands.put(job)
+
+    # pinning
+    #
+    # When the user says "Peek", the highlight pins to what they're looking at
+    # and stays there until the request is done, so they can look away while
+    # Peek works on it. It lets go while Peek asks them something, so they can
+    # look at their answer, then pins what they looked at.
+
+    def _pin(self, start: float | None = None, end: float | None = None) -> None:
+        if self.snapper is not None:
+            self.snapper.pin(start, end)
+
+    def _unpin(self) -> None:
+        if self.snapper is not None:
+            self.snapper.unpin()
+
+    def _unpin_if_idle(self) -> None:
+        user_talking = self.listener is not None and self.listener.turn_started is not None
+        if not self._working() and self._answers is None and not user_talking:
+            self._unpin()
 
     # voice
 
@@ -435,6 +461,10 @@ class GazeApp:
         for_peek = command is not None or self._for_peek(self.listener.turn_started or now)
         if not for_peek:
             return
+        if command is not None and not self._name_heard:
+            self._name_heard = True
+            if self._answers is None:
+                self._pin()
         if self.speaker.speaking:
             if not self._wants_the_floor(heard, command):
                 return
@@ -448,6 +478,13 @@ class GazeApp:
         return content_words(heard) >= (1 if self._answers is not None else 2)
 
     def _on_turn(self, turn: Turn) -> None:
+        self._name_heard = False
+        try:
+            self._handle_turn(turn)
+        finally:
+            self._unpin_if_idle()
+
+    def _handle_turn(self, turn: Turn) -> None:
         log.info("heard: %s", turn.transcript)
         heard = self._without_own_voice(turn.transcript, turn.started, turn.ended)
         if heard != turn.transcript.strip():
@@ -513,7 +550,10 @@ class GazeApp:
                 main = Fixation(latest[1], latest[2], latest[0], latest[0])
         others = [f for f in fixations if f is not main][-4:]
         snapper = self.snapper
-        highlighted = snapper.element_during(start - GAZE_LEAD_S, end) if snapper else None
+        highlighted = None
+        if snapper is not None:
+            highlighted = snapper.pinned_element() if snapper.pinned else None
+            highlighted = highlighted or snapper.element_during(start - GAZE_LEAD_S, end)
         return screen_context.build(
             main,
             others,
@@ -534,6 +574,7 @@ class GazeApp:
         """Speak `question` and wait for the user's answer (None if none came)."""
         answers: queue.Queue[Turn | None] = queue.Queue()
         self._answers = answers
+        self._unpin()
         try:
             self._say(question)
             self.speaker.wait()
@@ -552,6 +593,7 @@ class GazeApp:
                     return None
                 self._show("working", turn.transcript)
                 start = turn.started - GAZE_LEAD_S
+                self._pin(start, turn.ended)
                 main = primary(self.history.fixations(start, turn.ended))
                 snapper = self.snapper
                 return Answer(
@@ -570,6 +612,7 @@ class GazeApp:
             finally:
                 with self._jobs_lock:
                     self._jobs.remove(job)
+                self._unpin_if_idle()
             log.info("reply: %r", reply)
             if reply is None:
                 continue

@@ -12,6 +12,8 @@ from peek.screen.desktop import screens
 HIGHLIGHT_RGB = (0.04, 0.52, 1.0)
 HIGHLIGHT_PAD = 4.0
 HIGHLIGHT_MOVE_S = 0.09
+BORDER_W, PINNED_BORDER_W = 3.0, 5.0
+FILL_ALPHA, PINNED_FILL_ALPHA = 0.12, 0.22
 PILL_W, PILL_H = 640.0, 64.0
 PILL_TEXT_X, PILL_PAD_Y = 54.0, 17.0
 PILL_MAX_LINES = 4
@@ -54,10 +56,17 @@ def _highlight_view() -> AppKit.NSView:
     view.setWantsLayer_(True)
     layer = view.layer()
     layer.setCornerRadius_(7.0)
-    layer.setBorderWidth_(3.0)
     layer.setBorderColor_(_rgba(HIGHLIGHT_RGB, 0.95).CGColor())
-    layer.setBackgroundColor_(_rgba(HIGHLIGHT_RGB, 0.12).CGColor())
+    _style_highlight(view, pinned=False)
     return view
+
+
+def _style_highlight(view, pinned: bool) -> None:
+    """A pinned highlight is bolder, so it's clear Peek is holding on to it."""
+    layer = view.layer()
+    layer.setBorderWidth_(PINNED_BORDER_W if pinned else BORDER_W)
+    alpha = PINNED_FILL_ALPHA if pinned else FILL_ALPHA
+    layer.setBackgroundColor_(_rgba(HIGHLIGHT_RGB, alpha).CGColor())
 
 
 class PillView(AppKit.NSView):
@@ -145,12 +154,13 @@ class Overlay:
         if not enabled:
             self._highlight_window.orderOut_(None)
 
-    def highlight(self, rect: Rect | None) -> None:
+    def highlight(self, rect: Rect | None, pinned: bool = False) -> None:
         """Outline `rect` (global top-left coordinates), or hide the outline."""
         window = self._highlight_window
         if rect is None or not self._highlight_enabled:
             window.orderOut_(None)
             return
+        _style_highlight(window.contentView(), pinned)
         frame = AppKit.NSMakeRect(
             rect.x - HIGHLIGHT_PAD,
             self._main_h - rect.y - rect.h - HIGHLIGHT_PAD,

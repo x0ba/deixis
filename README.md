@@ -75,7 +75,10 @@ next to it in `calibration_samples.npz`.
 
 While you look around, a blue outline settles on the button, link, field or
 text you're looking at, in any app or web page that supports Accessibility.
-That's what "this" means in a command. If the outline keeps landing next to
+That's what "this" means in a command. When you say "Peek", the outline locks onto that
+thing and turns bolder, and stays there until Peek is done, so you can look
+away while it works. It lets go while Peek asks you a question, so you can look
+at your answer. If the outline keeps landing next to
 what you're looking at (you moved your chair, the light changed), say
 "Peek, re-center" and look at a single dot. That fixes a steady offset in
 two seconds. Recalibrate fully if it's off in different ways in different
