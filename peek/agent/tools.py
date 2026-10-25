@@ -171,12 +171,13 @@ TOOLS = [
     {
         "name": "recalibrate",
         "description": "Start eye-tracking calibration (the user follows dots with their eyes). "
-        "Use quick=true to re-center with a single dot when the gaze is consistently off "
-        "in one direction; use a full calibration when it is wrong in different ways in "
-        "different places.",
+        "mode=recenter shows a single dot, for when the gaze is consistently off in one "
+        "direction. mode=quick shows 6 dots and adapts the current calibration, for a new "
+        "person taking over or gaze that is off in different ways in different places. "
+        "mode=full (the default) takes about a minute and a half and is the most accurate.",
         "input_schema": {
             "type": "object",
-            "properties": {"quick": {"type": "boolean"}},
+            "properties": {"mode": {"type": "string", "enum": ["full", "quick", "recenter"]}},
         },
     },
 ]
@@ -215,7 +216,7 @@ class Executor:
         self,
         snapshot: Snapshot,
         refresh: Callable[[], Snapshot],
-        recalibrate: Callable[[bool], None],
+        recalibrate: Callable[[str], None],
         ask: Callable[[str], Answer | None] = lambda _: None,
     ):
         self.snapshot = snapshot
@@ -289,9 +290,11 @@ class Executor:
                 self.snapshot = self._refresh()
                 return json.dumps(self.snapshot.data), self.snapshot
             if name == "recalibrate":
-                quick = bool(args.get("quick"))
-                self._recalibrate(quick)
-                return "re-centering started" if quick else "calibration started", None
+                mode = args.get("mode", "full")
+                if mode not in ("full", "quick", "recenter"):
+                    raise ActionError(f"unknown calibration mode {mode}")
+                self._recalibrate(mode)
+                return f"{mode} calibration started", None
             return f"unknown tool {name}", None
         except ActionError as err:
             return f"error: {err}", None

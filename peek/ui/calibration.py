@@ -1,4 +1,4 @@
-"""Hands-free eye calibration and re-centering.
+"""Hands-free eye calibration, quick calibration and re-centering.
 
 Dots appear one at a time on the main screen. The user just looks at each
 one; nothing needs clicking. Esc cancels. Main thread only.
@@ -8,8 +8,11 @@ user shifts their head, so the model sees more than one posture. Then a dot
 glides across the screen for the user to follow, which adds many samples in
 between the grid points. The model is fitted with and without those, and both
 are tried on a few fresh dots; the better one is kept, and its error on those
-dots is the accuracy Peek reports and uses. Re-centering shows a single dot
-and only corrects the model's offset, for drift during a session.
+dots is the accuracy Peek reports and uses.
+
+Quick calibration shows 6 dots and adapts the current model to whoever is
+looking, e.g. the next person at a demo. Re-centering shows a single dot and
+only corrects the model's offset, for drift during a session.
 """
 
 import time
@@ -109,7 +112,19 @@ FULL_PLAN = [
     Pause("Last few dots, to check how it went.", 2.0),
     *CHECK,
 ]
+QUICK_GRID = [
+    Dot(fx, fy)
+    for row, fy in enumerate((0.12, 0.88))
+    for fx in ((0.08, 0.5, 0.92) if row == 0 else (0.92, 0.5, 0.08))
+]
+QUICK_PLAN = [Pause("Look at each dot until it moves.", 1.5), *QUICK_GRID]
 RECENTER_PLAN = [Pause("Look at the dot.", 1.0), Dot(0.5, 0.5)]
+PLANS = {"full": FULL_PLAN, "quick": QUICK_PLAN, "recenter": RECENTER_PLAN}
+CANCELLED = {
+    "full": "Calibration cancelled.",
+    "quick": "Quick calibration cancelled.",
+    "recenter": "Re-centering cancelled.",
+}
 
 
 class CalibrationWindow(AppKit.NSWindow):
@@ -177,7 +192,8 @@ class Samples:
 class Calibrator:
     """Plays one dot plan. `done(model or None, message)` is called at the end.
 
-    `quick` re-centers the camera's current model instead of fitting a new one.
+    `mode` is "full" to fit a new model, or "quick" or "recenter" to adjust the
+    camera's current one.
     """
 
     def __init__(
@@ -185,13 +201,13 @@ class Calibrator:
         camera,
         done: Callable[[object, str], None],
         say: Callable[[str], None] = lambda _text: None,
-        quick: bool = False,
+        mode: str = "full",
     ):
         self._camera = camera
         self._done = done
         self._say = say
-        self._quick = quick
-        self._plan = RECENTER_PLAN if quick else FULL_PLAN
+        self._mode = mode
+        self._plan = PLANS[mode]
         positions = sorted({(d.fx, d.fy) for d in self._plan if isinstance(d, Dot) and not d.check})
         self._group = {p: i for i, p in enumerate(positions)}
         screen = AppKit.NSScreen.screens()[0]
@@ -324,7 +340,7 @@ class Calibrator:
     def cancel(self) -> None:
         if not self._finished:
             self._close()
-            self._done(None, "Re-centering cancelled." if self._quick else "Calibration cancelled.")
+            self._done(None, CANCELLED[self._mode])
 
     def _usable(self) -> Samples | None:
         """Samples from dots that were seen long enough, or None if there are none."""
@@ -342,8 +358,10 @@ class Calibrator:
 
     def _finish(self) -> None:
         self._close()
-        if self._quick:
+        if self._mode == "recenter":
             self._finish_recenter(self._usable())
+        elif self._mode == "quick":
+            self._finish_quick(self._usable())
         else:
             self._finish_full()
 
@@ -357,6 +375,20 @@ class Calibrator:
         self._done(
             model.recentered(usable.features, tuple(usable.targets[0])),
             f"Re-centered. It was off by about {round(moved)} pixels.",
+        )
+
+    def _finish_quick(self, usable: Samples | None) -> None:
+        model = self._camera.model
+        seen = 0 if usable is None else len(np.unique(usable.visits))
+        if model is None or seen < gaze_model.MIN_ADAPT_DOTS:
+            self._done(None, "I couldn't see your eyes well enough. Let's try again.")
+            return
+        adapted = gaze_model.adapt(
+            model, usable.features, usable.targets, usable.visits, self._size
+        )
+        self._done(
+            adapted,
+            f"Quick calibration done. Accuracy is about {round(adapted.error_px)} pixels.",
         )
 
     def _fit(self) -> bool:

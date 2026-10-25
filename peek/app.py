@@ -43,6 +43,9 @@ WINK_LOOK_S = (0.6, 0.05)
 KEYTERMS = ["Peek", "full screen", "split screen", "minimize", "text box", "re-center"]
 SLEEP = re.compile(r"^(go to sleep|stop listening|sleep|pause)\W*$", re.I)
 WAKE = re.compile(r"^(wake up|start listening|resume|i'm back)\W*$", re.I)
+QUICK_CALIBRATE = re.compile(
+    r"^(quick(ly)?\W+(re)?calibrat(e|ion)|(re)?calibrat(e|ion)\W+quick(ly)?)\b.*$", re.I
+)
 CALIBRATE = re.compile(r"^(re)?calibrat(e|ion)\b.*$", re.I)
 RECENTER = re.compile(r"^re-?cent(er|re)\b.*$", re.I)
 STOP = re.compile(
@@ -97,8 +100,11 @@ class MenuTarget(AppKit.NSObject):
     def calibrate_(self, sender):
         self.app.start_calibration()
 
+    def quickCalibrate_(self, sender):
+        self.app.start_calibration("quick")
+
     def recenter_(self, sender):
-        self.app.start_calibration(quick=True)
+        self.app.start_calibration("recenter")
 
     def toggleHighlight_(self, sender):
         self.app.toggle_highlight()
@@ -207,6 +213,7 @@ class GazeApp:
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._pause_item = self._add(menu, "Pause Listening", "togglePause:")
         self._add(menu, "Calibrate Eyes", "calibrate:")
+        self._add(menu, "Quick Calibrate Eyes (6 dots)", "quickCalibrate:")
         self._add(menu, "Re-center Eyes", "recenter:")
         self._highlight_item = self._add(menu, "Show Highlight", "toggleHighlight:")
         self._highlight_item.setState_(1 if self.config.show_highlight else 0)
@@ -325,7 +332,9 @@ class GazeApp:
             return self.gaze.model.error_px
         return UNCALIBRATED_ERROR_PX
 
-    def start_calibration(self, quick: bool = False) -> None:
+    def start_calibration(self, mode: str = "full") -> None:
+        """`mode` is "full", "quick" or "recenter"; the last two need a calibration
+        to adjust, so without one they calibrate fully."""
         if not isinstance(self.gaze, CameraGaze):
             self.speaker.say("Calibration is only for webcam eye tracking.")
             return
@@ -334,12 +343,17 @@ class GazeApp:
             return
         if self._calibrator is not None:
             return
-        quick = quick and self.gaze.calibrated
+        if not self.gaze.calibrated:
+            mode = "full"
         self.overlay.set_highlight_enabled(False)
         self.speaker.say(
-            "Look at the dot." if quick else "Let's calibrate. Look at each dot until it moves."
+            {
+                "full": "Let's calibrate. Look at each dot until it moves.",
+                "quick": "Quick calibration. Look at each dot until it moves.",
+                "recenter": "Look at the dot.",
+            }[mode]
         )
-        self._calibrator = Calibrator(self.gaze, self._calibrated, self.speaker.say, quick)
+        self._calibrator = Calibrator(self.gaze, self._calibrated, self.speaker.say, mode)
         self._calibrator.start()
 
     def _calibrated(self, model, message: str) -> None:
@@ -596,11 +610,14 @@ class GazeApp:
         if SLEEP.match(command):
             _on_main(self.set_sleeping, True, "Okay, I'll wait.")
             return
+        if QUICK_CALIBRATE.match(command):
+            _on_main(self.start_calibration, "quick")
+            return
         if CALIBRATE.match(command):
             _on_main(self.start_calibration)
             return
         if RECENTER.match(command):
-            _on_main(self.start_calibration, True)
+            _on_main(self.start_calibration, "recenter")
             return
         answers = self._answers
         if answers is not None:
@@ -706,7 +723,7 @@ class GazeApp:
                 said,
                 self._snapshot(job.started, job.ended),
                 refresh=self._refresh,
-                recalibrate=lambda quick=False: _on_main(self.start_calibration, quick),
+                recalibrate=lambda mode="full": _on_main(self.start_calibration, mode),
                 said_name=job.said_name,
                 ask=self._ask,
                 say=self._say,

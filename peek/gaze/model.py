@@ -13,6 +13,10 @@ typical posture change instead.
 
 Samples in group -1 (from following a moving dot) are only ever used for
 training: their targets are less exact, so errors are measured on fixed dots.
+
+A handful of dots is too few to fit a new model, but enough to adapt an
+existing one to someone else: `adapt` fits an affine correction (scale, skew
+and offset) of its predictions, pulled toward no change.
 """
 
 from dataclasses import dataclass, field, replace
@@ -23,6 +27,8 @@ import numpy as np
 from peek.gaze.features import FEATURE_DIM, FEATURE_NAMES, FEATURES_VERSION, LOOK_BLENDSHAPES
 
 ALPHAS = (0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0)
+ADAPT_ALPHA = 0.05  # in screen fractions, so it doesn't depend on screen size
+MIN_ADAPT_DOTS = 4
 MIN_STD = {"yaw": 0.05, "pitch": 0.05, "roll": 0.05, "tx": 1.5, "ty": 1.5, "tz": 3.0}
 _MIN_STD = np.array([MIN_STD.get(name, 0.0) for name in FEATURE_NAMES])
 
@@ -184,4 +190,53 @@ def fit(
         cv_error_px=err,
         mask=mask,
         feature_set=name,
+    )
+
+
+def _affine(predicted: np.ndarray, targets: np.ndarray) -> np.ndarray:
+    """The (3, 2) map taking [x, y, 1] predictions to targets, both in screen
+    fractions, with its linear part pulled toward the identity."""
+    p = np.hstack([predicted, np.ones((len(predicted), 1))])
+    identity = np.vstack([np.eye(2), np.zeros((1, 2))])
+    penalty = ADAPT_ALPHA * np.diag([1.0, 1.0, 0.0])
+    return identity + np.linalg.solve(p.T @ p + penalty, p.T @ (targets - p @ identity))
+
+
+def adapt(
+    model: GazeModel,
+    features: np.ndarray,
+    targets: np.ndarray,
+    visits: np.ndarray,
+    screen: tuple[float, float],
+) -> GazeModel:
+    """`model` adapted to whoever looked at `targets`, one dot per visit.
+
+    Whichever of `model` with an affine correction and `model` unchanged is
+    more accurate on held-out dots, with that error as `checked_error_px`.
+    """
+    dots = np.unique(visits)
+    if len(dots) < MIN_ADAPT_DOTS:
+        raise ValueError(f"need at least {MIN_ADAPT_DOTS} dots")
+    scale = np.asarray(screen, dtype=float)
+    predicted = (
+        np.array([np.median(model.predict(features[visits == v]), axis=0) for v in dots]) / scale
+    )
+    goals = np.array([targets[visits == v][0] for v in dots]) / scale
+
+    held_out = []
+    for i in range(len(dots)):
+        a = _affine(np.delete(predicted, i, axis=0), np.delete(goals, i, axis=0))
+        held_out.append(np.linalg.norm((np.append(predicted[i], 1.0) @ a - goals[i]) * scale))
+    corrected = float(np.mean(held_out))
+    unchanged = float(np.mean(np.linalg.norm((predicted - goals) * scale, axis=1)))
+    if unchanged <= corrected:
+        return replace(model, checked_error_px=unchanged)
+
+    a = _affine(predicted, goals)
+    linear = a[:2] * scale[None, :] / scale[:, None]
+    return replace(
+        model,
+        weights=model.weights @ linear,
+        offset=model.offset @ linear + a[2] * scale,
+        checked_error_px=corrected,
     )

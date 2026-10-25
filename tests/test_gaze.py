@@ -214,6 +214,44 @@ def test_recentering_moves_the_median_prediction_onto_the_target(tmp_path):
     np.testing.assert_allclose(model.GazeModel.load(path).offset, shifted.offset)
 
 
+QUICK_DOTS = [(115, 108), (720, 108), (1325, 108), (1325, 792), (720, 792), (115, 792)]
+
+
+def test_adapting_to_someone_else_fixes_scale_and_offset(tmp_path):
+    rng = np.random.default_rng(9)
+    fitted = model.fit(*synthetic(GRID_3X3, rng))
+    feats, targets, visits = synthetic(QUICK_DOTS, rng)
+    # Someone whose eyes move less across the screen, from a different spot.
+    feats[:, [H, FEATURE_NAMES.index("l_h")]] = 0.5 + 0.7 * (feats[:, [H]] - 0.5)
+    feats[:, [V, FEATURE_NAMES.index("l_v")]] += 0.03
+    probe, truth, _ = synthetic([(500, 600)], rng, per_target=40)
+    probe[:, [H, FEATURE_NAMES.index("l_h")]] = 0.5 + 0.7 * (probe[:, [H]] - 0.5)
+    probe[:, [V, FEATURE_NAMES.index("l_v")]] += 0.03
+    before = np.linalg.norm(fitted.predict(probe).mean(axis=0) - truth[0])
+
+    adapted = model.adapt(fitted, feats, targets, visits, (1440, 900))
+    after = np.linalg.norm(adapted.predict(probe).mean(axis=0) - truth[0])
+    assert before > 100 and after < 40
+    assert adapted.error_px < 60
+
+    path = tmp_path / "cal.npz"
+    adapted.save(path)
+    np.testing.assert_allclose(
+        model.GazeModel.load(path).predict(probe[0]), adapted.predict(probe[0])
+    )
+
+
+def test_adapting_keeps_a_model_that_already_fits():
+    rng = np.random.default_rng(10)
+    fitted = model.fit(*synthetic(GRID_3X3, rng))
+    feats, targets, visits = synthetic(QUICK_DOTS, rng)
+    adapted = model.adapt(fitted, feats, targets, visits, (1440, 900))
+    probe, truth, _ = synthetic([(500, 600)], rng, per_target=40)
+    assert np.linalg.norm(adapted.predict(probe).mean(axis=0) - truth[0]) < 40
+    with pytest.raises(ValueError):
+        model.adapt(fitted, feats[:75], targets[:75], visits[:75], (1440, 900))
+
+
 def test_cv_error_is_per_visit_not_per_position():
     rng = np.random.default_rng(8)
     feats, targets, groups = synthetic(GRID_3X3 * 2, rng)

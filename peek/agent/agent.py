@@ -116,7 +116,7 @@ class Agent:
         utterance: str,
         snapshot: Snapshot,
         refresh: Callable[[], Snapshot],
-        recalibrate: Callable[[bool], None],
+        recalibrate: Callable[[str], None],
         *,
         said_name: bool = True,
         ask: Callable[[str], Answer | None] = lambda _: None,

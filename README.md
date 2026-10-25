@@ -8,7 +8,7 @@ Look at something on your Mac, say what you want, and Peek does it.
 - "Peek, put this on the left and that on the right." (look at one window, then the other)
 - "Peek, write 'running ten minutes late' here." (looking at a text box)
 - "Peek, what does this say?" / "read this to me"
-- "Peek, scroll down." / "open Safari" / "go to sleep" / "wake up" / "recalibrate" / "re-center"
+- "Peek, scroll down." / "open Safari" / "go to sleep" / "wake up" / "recalibrate" / "quick calibrate" / "re-center"
 - Wink one eye to click whatever is outlined in blue, no words needed (webcam
   only; turn off with `PEEK_WINK_CLICK=false`).
 
@@ -124,12 +124,19 @@ at your answer. If the outline keeps landing next to
 what you're looking at (you moved your chair, the light changed), say
 "Peek, re-center" and look at a single dot. That fixes a steady offset in
 two seconds. Recalibrate fully if it's off in different ways in different
-places. Clicking also helps: each time you click with the mouse or a wink,
+places.
+
+When someone else sits down (the next person at a demo, say), they don't need
+the full minute and a half: say "Peek, quick calibrate" or choose Quick
+Calibrate Eyes. They look at 6 dots for about 12 seconds, and Peek adapts the
+existing calibration to them, correcting its scale and offset. It's less
+accurate than a full calibration, so it works best when the full one was done
+well first. Clicking also helps: each time you click with the mouse or a wink,
 Peek assumes you were looking at what you clicked and nudges the tracking a
 little toward it.
 
-Peek lives in the menu bar (the eye icon), with Pause, Calibrate Eyes,
-Re-center Eyes, Show Highlight, Gaze Source and Quit.
+Peek lives in the menu bar (the eye icon), with Pause, Calibrate Eyes, Quick
+Calibrate Eyes, Re-center Eyes, Show Highlight, Gaze Source and Quit.
 
 ## Your first five minutes
 

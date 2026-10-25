@@ -2,7 +2,17 @@ import random
 
 from peek.screen.ax import Rect
 from peek.screen.snap import Candidate, Snapper, likelihood, ring, search_rings
-from peek.ui.calibration import CHECK, FULL_PLAN, GRID, HEAD_GRID, PURSUIT, RECENTER_PLAN, Dot, Fit
+from peek.ui.calibration import (
+    CHECK,
+    FULL_PLAN,
+    GRID,
+    HEAD_GRID,
+    PURSUIT,
+    QUICK_PLAN,
+    RECENTER_PLAN,
+    Dot,
+    Fit,
+)
 
 BUTTON = Rect(500, 300, 80, 24)
 LINK = Rect(500, 380, 80, 24)
@@ -155,6 +165,9 @@ def test_calibration_plans():
     assert all(d.check for d in CHECK)
     assert not {(d.fx, d.fy) for d in CHECK} & {(d.fx, d.fy) for d in GRID}
     assert [s for s in RECENTER_PLAN if isinstance(s, Dot)] == [Dot(0.5, 0.5)]
+    quick = [s for s in QUICK_PLAN if isinstance(s, Dot)]
+    assert len({(d.fx, d.fy) for d in quick}) == len(quick) == 6
+    assert not any(isinstance(s, Fit) or getattr(s, "check", False) for s in QUICK_PLAN)
 
 
 TOOLBAR = {f"b{i}": Rect(400 + 70 * i, 300, 60, 28) for i in range(6)}
