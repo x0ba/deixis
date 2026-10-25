@@ -174,3 +174,49 @@ def test_thanks_ends_the_conversation(app):
     assert app.speaker.said and app.speaker.said[-1] in app_mod.ACKNOWLEDGE
     hear(app, "close it")
     assert submitted(app) == []
+
+
+class FakeSnapper:
+    def __init__(self):
+        self.pinned = False
+        self.pins: list[tuple] = []
+
+    def pin(self, start=None, end=None):
+        self.pinned = True
+        self.pins.append((start, end))
+
+    def unpin(self):
+        self.pinned = False
+
+
+def test_saying_the_name_pins_what_they_look_at_until_the_request_is_done(app):
+    app.snapper = FakeSnapper()
+    app.listener.turn_started = time.monotonic()
+    app._on_partial("Peek, close")
+    assert app.snapper.pins == [(None, None)]
+    app._on_partial("Peek, close this")
+    assert len(app.snapper.pins) == 1
+    app.listener.turn_started = None
+    hear(app, "Peek, close this")
+    assert app.snapper.pinned and len(app.snapper.pins) == 1
+    app._jobs.clear()
+    app._unpin_if_idle()
+    assert not app.snapper.pinned
+
+
+def test_just_the_name_lets_go_of_the_pin(app):
+    app.snapper = FakeSnapper()
+    app.listener.turn_started = time.monotonic()
+    app._on_partial("Peek")
+    app.listener.turn_started = None
+    hear(app, "Peek")
+    assert app.snapper.pins and not app.snapper.pinned
+
+
+def test_follow_ups_pin_what_they_looked_at_while_speaking(app):
+    app.snapper = FakeSnapper()
+    hear(app, "Peek")
+    hear(app, "make it full screen")
+    assert app.snapper.pinned
+    start, end = app.snapper.pins[-1]
+    assert start is not None and end is not None

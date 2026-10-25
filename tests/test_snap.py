@@ -108,6 +108,43 @@ def test_resting_gaze_is_not_looked_up_again():
     assert 2 <= len(screen.calls) <= 3
 
 
+def test_pinned_highlight_stays_while_the_gaze_moves_on():
+    snapper = FakeScreen(button=BUTTON, link=LINK).snapper()
+    _, t = hold(snapper, 540, 312, 0.0)
+    snapper.pin()
+    drawn, t = hold(snapper, 540, 392, t)
+    assert drawn == BUTTON
+    assert snapper.pinned_element() == "button"
+    assert snapper.element_during(t - 0.1, t) == "link"
+    snapper.unpin()
+    drawn, _ = hold(snapper, 540, 392, t, seconds=0.1)
+    assert drawn == LINK
+    assert snapper.pinned_element() is None
+
+
+def test_pin_can_pick_what_was_highlighted_earlier():
+    snapper = FakeScreen(button=BUTTON, link=LINK).snapper()
+    _, t = hold(snapper, 540, 312, 0.0)
+    _, t = hold(snapper, 540, 392, t)
+    snapper.pin(0.0, 0.3)
+    assert snapper.pinned_element() == "button"
+
+
+def test_pinned_highlight_follows_its_element_and_hides_when_it_goes():
+    screen = FakeScreen(button=BUTTON, link=LINK)
+    snapper = screen.snapper()
+    _, t = hold(snapper, 540, 312, 0.0)
+    snapper.pin()
+    moved = Rect(500, 280, 80, 24)
+    screen.frames["button"] = moved
+    drawn, t = hold(snapper, 540, 392, t, seconds=0.6)
+    assert drawn == moved
+    del screen.frames["button"]
+    drawn, _ = hold(snapper, 540, 392, t, seconds=0.6)
+    assert drawn is None
+    assert snapper.pinned
+
+
 def test_calibration_plans():
     assert len({(d.fx, d.fy) for d in GRID}) == 25
     assert {(d.fx, d.fy) for d in HEAD_GRID} <= {(d.fx, d.fy) for d in GRID}
