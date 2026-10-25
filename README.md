@@ -50,6 +50,31 @@ can't hear you while it's talking, so you have to wait for it to finish.
 | Context | macOS Accessibility: the window and element under your gaze, the buttons and links of the post, message or row it's part of, interactive elements near it (webcam gaze is off by 100-200 px), other places you looked while speaking, all windows, and an optional screenshot crop with your gaze marked. |
 | Acting | Claude with tools for windows (full screen, close, minimize, tile, split), typing, clicking, keys, scrolling, opening apps and links. |
 
+### Cartesia features used
+
+All through the Python SDK (`cartesia[websockets]` 4.2).
+
+- **Ink-2 streaming speech-to-text** over the auto-finalize WebSocket
+  (`stt.auto_finalize.websocket`). The mic streams 16 kHz 16-bit PCM
+  continuously, so there's no push-to-talk.
+- **Native turn detection.** Peek reacts to the turn events directly:
+  - `turn.start` marks when you started talking. Peek uses it to look up what
+    you were looking at then, not where your eyes ended up once the
+    transcript arrived.
+  - `turn.update` and `turn.eager_end` partial transcripts let Peek spot the
+    wake word early, lock the outline, show what it's hearing in the pill,
+    and stop talking as soon as you talk over it.
+  - `turn.end` delivers the final transcript, which is what Peek acts on.
+    `turn_end_timeout_ms` is set to 2500.
+- **Keyterm boosting** (`keyterm`) for the wake word and command words the
+  model tends to mishear: "Peek", "full screen", "split screen", "minimize",
+  "text box", "re-center".
+- **Sonic 3.6 streaming text-to-speech** over one persistent WebSocket, with
+  a context per reply. Raw 44.1 kHz PCM chunks play as they arrive, written
+  50 ms at a time so an interruption cuts the audio almost right away and
+  cancels the context.
+- **Stock voices**, picked with `PEEK_VOICE_ID`.
+
 ## Setup
 
 ### What you need
@@ -185,6 +210,48 @@ All optional, in `.env`. See `.env.example`.
 | `PEEK_VOICE_ID` | a Cartesia stock voice | |
 
 Restart Peek after changing `.env`.
+
+## Known limitations
+
+- **macOS only, English only.** Peek speaks English, and its built-in
+  commands ("stop", "go to sleep", "recalibrate", ...) are English phrases.
+- **It needs the internet.** Listening has no offline fallback: if Cartesia
+  can't be reached, Peek can't hear you and keeps trying to reconnect.
+  Speaking falls back to macOS `say`, but understanding requests needs
+  Anthropic.
+- **The mic streams to Cartesia whenever Peek is running.** While Peek is
+  paused, muted or below the noise gate it sends silence instead of what the
+  mic hears, but the connection stays open.
+- **Webcam gaze is only accurate to about 100-200 px.** In tightly packed
+  lists, like a sidebar of 30 px rows, the outline sometimes lands on the
+  item next to the one you mean. Quick calibration is less accurate than a
+  full one.
+- **Webcam eye tracking covers the main display only.** Calibration dots
+  appear only on the main display. To work on other displays, use
+  `PEEK_SOURCE=mouse` with a head mouse or eye tracker.
+- **When the camera loses your face**, the outline stays where it was
+  instead of disappearing.
+- **Apps that draw their own content** (terminals, games, canvas-based apps)
+  show Accessibility little or nothing, so the outline tends to stick to the
+  last thing it found and Peek can't point at much inside them. Peek turns on full web Accessibility for Chrome, Brave, Edge,
+  Arc and Vivaldi. Other Chromium-based browsers may not show it the page.
+- **Telling its voice from yours works on the words, not the audio.** Peek
+  removes from the transcript anything that matches what it just said. On
+  speakers, if you repeat its words back while it's talking, those words can
+  get dropped, and a loud room can still make it cut itself off. Headphones
+  avoid both.
+- **Short interjections don't interrupt.** While Peek is talking, it needs
+  "stop", "wait", "never mind", the wake word, or at least two real words
+  before it stops (one if it just asked you something). A single "no" isn't
+  enough.
+- **Turn detection decides when you're done.** A long pause mid-sentence can
+  end your turn early, and Peek then acts on the first half.
+- **The wake word is matched loosely** so that "Peak" and "Peek's" still
+  count. A clause that starts with a similar word can wake it by mistake.
+- **Side conversations are filtered by Claude, not by rules**, so sometimes
+  Peek answers something you said to someone else.
+- **Memory is short**: the last 8 exchanges from the last 10 minutes.
+- **Wink-to-click can misfire** when you squint or rub an eye.
 
 ## Troubleshooting
 
