@@ -35,6 +35,13 @@ spoke. The user could see the outline around it, so it is the best guess for \
 sorted by distance. When the element directly under the gaze doesn't fit the \
 request (say they want to type but it's a label), choose the nearest one that \
 fits, e.g. the closest editable field.
+- `looking_at.item`, when present, is the post, message or row that what they're \
+looking at belongs to, with its buttons, links and fields in reading order in \
+`controls`. For requests about the whole thing ("like this", "reply to this post", \
+"delete this message"), choose from `item.controls` by label, not a similar control \
+in `nearby_elements`, which may belong to the item above or below. Labels often \
+show state: a button labelled "Liked" or "Unlike" means it's already liked, and \
+pressing it would undo that.
 - `other_fixations_in_order` are other places they looked, in time order. Use \
 them for requests like "move this there" or "put that next to this".
 - `windows_front_to_back` lists visible windows; `w` ids work with window tools.

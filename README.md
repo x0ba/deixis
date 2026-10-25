@@ -47,7 +47,7 @@ can't hear you while it's talking, so you have to wait for it to finish.
 | Eye tracking | Webcam + MediaPipe Face Landmarker (iris, eyelid blendshapes, head pose), a 25-dot calibration plus 9 more after a head shift, a moving dot to follow, and 5 check dots that measure the real accuracy; ridge regression with the feature set picked per calibration; a One Euro filter; drift correction from your clicks; and a blue outline that goes to the control or text that has gathered the most gaze over the last fraction of a second, and only moves when another one clearly wins. Or the pointer, for head-mouse and hardware eye-tracker users. |
 | Listening | [Cartesia](https://www.cartesia.ai/) Ink-2 realtime STT with built-in turn detection, so there's no button to hold. |
 | Speaking | Cartesia Sonic 3.6, streamed. Falls back to macOS `say`. |
-| Context | macOS Accessibility: the window and element under your gaze, interactive elements near it (webcam gaze is off by 100-200 px), other places you looked while speaking, all windows, and an optional screenshot crop with your gaze marked. |
+| Context | macOS Accessibility: the window and element under your gaze, the buttons and links of the post, message or row it's part of, interactive elements near it (webcam gaze is off by 100-200 px), other places you looked while speaking, all windows, and an optional screenshot crop with your gaze marked. |
 | Acting | Claude with tools for windows (full screen, close, minimize, tile, split), typing, clicking, keys, scrolling, opening apps and links. |
 
 ## Setup

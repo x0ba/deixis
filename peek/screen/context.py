@@ -131,6 +131,18 @@ def _nearby(app, gx: float, gy: float, radius: float, registry: Registry, skip) 
     return [describe(e, registry, gx, gy, value_limit=160) for _, e in found[:10]]
 
 
+def _item(element, registry: Registry, gx: float, gy: float) -> dict | None:
+    item = ax.item_of(element)
+    if item is None:
+        return None
+    controls = ax.controls_in(item)
+    if not controls:
+        return None
+    out = describe(item, registry, gx, gy, value_limit=160)
+    out["controls"] = [describe(c, registry, gx, gy, value_limit=80) for c in controls]
+    return out
+
+
 def _window_summary(key: str, info: desktop.WindowInfo, window) -> dict:
     out = {"id": key, "app": info.app, "frame": info.bounds.as_dict()}
     if window is not None:
@@ -246,6 +258,10 @@ def build(
                 role, name = ax.attr(parent, "AXRole"), ax.label(parent)
                 inside.append(f"{role} '{name}'" if name else str(role))
             target["inside"] = inside
+        start = highlighted if highlighted is not None else element
+        item = _item(start, registry, gx, gy) if start is not None else None
+        if item:
+            target["item"] = item
         radius = max(60.0, min(gaze_error_px, 220.0))
         target["nearby_elements"] = _nearby(app, gx, gy, radius, registry, element)
         data["looking_at"] = target

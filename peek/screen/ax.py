@@ -248,6 +248,46 @@ def interactive(element):
     return found
 
 
+def _is_item(element, role) -> bool:
+    if role == "AXRow":
+        return True
+    return role == "AXGroup" and attr(element, "AXSubrole") == "AXDocumentArticle"
+
+
+def item_of(element, limit: int = 30):
+    """The post, message or row an element is part of: the element itself or its
+    nearest ancestor that is a web article or a table/list row."""
+    current = element
+    for _ in range(limit):
+        if current is None:
+            return None
+        role = attr(current, "AXRole")
+        if role in ("AXWindow", "AXApplication", "AXWebArea"):
+            return None
+        if _is_item(current, role):
+            return current
+        current = attr(current, "AXParent")
+    return None
+
+
+def controls_in(item, limit: int = 30, max_nodes: int = 400) -> list:
+    """The buttons, links and fields inside `item`, in reading order. Items nested
+    in it (a quoted post) are skipped: their controls act on them, not on `item`."""
+    found, visited = [], 0
+    stack = list(reversed(attr(item, "AXChildren") or []))
+    while stack and len(found) < limit and visited < max_nodes:
+        element = stack.pop()
+        visited += 1
+        role = attr(element, "AXRole")
+        if _is_item(element, role):
+            continue
+        if role in INTERACTIVE_ROLES and role not in PASSIVE_ROLES and role != "AXCell":
+            found.append(element)
+            continue
+        stack.extend(reversed(attr(element, "AXChildren") or []))
+    return found
+
+
 def ancestors(element, limit: int = 8) -> list:
     chain, current = [], attr(element, "AXParent")
     while current is not None and len(chain) < limit:
