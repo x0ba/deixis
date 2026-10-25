@@ -23,6 +23,9 @@ usually mean what they were looking at while they spoke.
 Each request comes with a JSON snapshot of the screen:
 - `gaze` is where they looked longest while speaking, in global screen points \
 (top-left origin). Webcam gaze is imprecise; `typical_error_px` says by how much.
+- `gaze.highlighted`, when present, is the element outlined on screen while they \
+spoke. The user could see the outline around it, so it is the best guess for \
+"this" unless it clearly doesn't fit the request.
 - `looking_at` is the window and element under the gaze, plus `nearby_elements` \
 sorted by distance. When the element directly under the gaze doesn't fit the \
 request (say they want to type but it's a label), choose the nearest one that \
@@ -60,7 +63,7 @@ class Agent:
         utterance: str,
         snapshot: Snapshot,
         refresh: Callable[[], Snapshot],
-        recalibrate: Callable[[], None],
+        recalibrate: Callable[[bool], None],
         on_step: Callable[[str], None] = lambda _: None,
     ) -> str:
         executor = Executor(snapshot, refresh, recalibrate)

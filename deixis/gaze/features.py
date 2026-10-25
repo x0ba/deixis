@@ -1,18 +1,23 @@
 """Gaze features from one MediaPipe Face Landmarker result.
 
 Landmark indices are from the 478-point mesh. Each eye is listed as
-(image-left corner, image-right corner, upper lid, lower lid, iris center) so
-both horizontal ratios grow in the same direction when the eyes move.
-Subject's right eye: corners 33/133, lids 159/145, iris 468.
-Subject's left eye: corners 362/263, lids 386/374, iris 473.
+(image-left corner, image-right corner, iris center) so both horizontal
+ratios grow in the same direction when the eyes move.
+Subject's right eye: corners 33/133, iris 468.
+Subject's left eye: corners 362/263, iris 473.
+
+Vertical position is measured from the corner line, not between the lids,
+because the lids follow the iris up and down and cancel most of the signal.
 """
 
 import math
 
 import numpy as np
 
-RIGHT_EYE = (33, 133, 159, 145, 468)
-LEFT_EYE = (362, 263, 386, 374, 473)
+RIGHT_EYE = (33, 133, 468)
+LEFT_EYE = (362, 263, 473)
+
+FEATURES_VERSION = 2
 
 LOOK_BLENDSHAPES = (
     "eyeLookInLeft",
@@ -43,18 +48,17 @@ FEATURE_NAMES = (
 FEATURE_DIM = len(FEATURE_NAMES)
 
 
-def eye_ratios(points: np.ndarray, eye: tuple[int, int, int, int, int]) -> tuple[float, float]:
-    """Iris position along the corner axis (h) and lid axis (v), both roughly 0..1."""
-    left, right, upper, lower, iris = (points[i] for i in eye)
-    return _project(left, right, iris), _project(upper, lower, iris)
-
-
-def _project(a: np.ndarray, b: np.ndarray, p: np.ndarray) -> float:
-    axis = b - a
+def eye_ratios(points: np.ndarray, eye: tuple[int, int, int]) -> tuple[float, float]:
+    """Iris position along the corner axis (h, roughly 0..1) and across it (v, grows
+    downward in the image), both in units of the corner-to-corner distance."""
+    left, right, iris = (points[i] for i in eye)
+    axis = right - left
     denom = float(axis @ axis)
     if denom < 1e-9:
         raise ValueError("degenerate eye")
-    return float((p - a) @ axis / denom)
+    offset = iris - left
+    normal = np.array([-axis[1], axis[0]])
+    return float(offset @ axis / denom), float(offset @ normal / denom)
 
 
 def head_pose(matrix: np.ndarray) -> tuple[float, float, float, float, float, float]:

@@ -25,7 +25,7 @@ class Config:
     wake_words: list[str] = field(default_factory=list)
     require_wake_word: bool = True
     send_screenshot: bool = True
-    show_gaze_dot: bool = True
+    show_highlight: bool = True
     camera_index: int = 0
     face_model_path: Path = ROOT / "models" / "face_landmarker.task"
     calibration_path: Path = SUPPORT_DIR / "calibration.npz"
@@ -43,6 +43,6 @@ def load_config() -> Config:
         wake_words=[w.strip().lower() for w in wake.split(",") if w.strip()],
         require_wake_word=_flag("DEIXIS_REQUIRE_WAKE_WORD", True),
         send_screenshot=_flag("DEIXIS_SEND_SCREENSHOT", True),
-        show_gaze_dot=_flag("DEIXIS_SHOW_GAZE", True),
+        show_highlight=_flag("DEIXIS_HIGHLIGHT", True),
         camera_index=int(os.environ.get("DEIXIS_CAMERA", "0")),
     )

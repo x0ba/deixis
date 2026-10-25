@@ -1,11 +1,17 @@
-"""Click-through overlays: a gaze dot and a status pill. Main thread only."""
+"""Click-through overlays: a highlight around the gazed element and a status pill.
+
+Main thread only.
+"""
 
 import AppKit
 import objc
 
+from deixis.screen.ax import Rect
 from deixis.screen.desktop import screens
 
-DOT = 34.0
+HIGHLIGHT_RGB = (0.04, 0.52, 1.0)
+HIGHLIGHT_PAD = 4.0
+HIGHLIGHT_MOVE_S = 0.09
 PILL_W, PILL_H = 640.0, 64.0
 
 COLORS = {
@@ -40,26 +46,16 @@ def _overlay_window(rect) -> AppKit.NSWindow:
     return window
 
 
-class DotView(AppKit.NSView):
-    def initWithFrame_(self, frame):
-        self = objc.super(DotView, self).initWithFrame_(frame)
-        if self is None:
-            return None
-        self.rgb = COLORS["listening"]
-        return self
-
-    def drawRect_(self, rect):
-        bounds = self.bounds()
-        inset = AppKit.NSInsetRect(bounds, 5, 5)
-        ring = AppKit.NSBezierPath.bezierPathWithOvalInRect_(inset)
-        _rgba(self.rgb, 0.22).setFill()
-        ring.fill()
-        ring.setLineWidth_(3)
-        _rgba(self.rgb, 0.85).setStroke()
-        ring.stroke()
-        center = AppKit.NSInsetRect(bounds, DOT / 2 - 3, DOT / 2 - 3)
-        _rgba(self.rgb, 0.95).setFill()
-        AppKit.NSBezierPath.bezierPathWithOvalInRect_(center).fill()
+def _highlight_view() -> AppKit.NSView:
+    view = AppKit.NSView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 10, 10))
+    view.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+    view.setWantsLayer_(True)
+    layer = view.layer()
+    layer.setCornerRadius_(7.0)
+    layer.setBorderWidth_(3.0)
+    layer.setBorderColor_(_rgba(HIGHLIGHT_RGB, 0.95).CGColor())
+    layer.setBackgroundColor_(_rgba(HIGHLIGHT_RGB, 0.12).CGColor())
+    return view
 
 
 class PillView(AppKit.NSView):
@@ -96,14 +92,13 @@ class PillView(AppKit.NSView):
 
 class Overlay:
     def __init__(self):
-        self._dot_window = _overlay_window(AppKit.NSMakeRect(0, 0, DOT, DOT))
-        self._dot = DotView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, DOT, DOT))
-        self._dot_window.setContentView_(self._dot)
+        self._highlight_window = _overlay_window(AppKit.NSMakeRect(0, 0, 10, 10))
+        self._highlight_window.setContentView_(_highlight_view())
         self._pill_window = _overlay_window(AppKit.NSMakeRect(0, 0, PILL_W, PILL_H))
         self._pill = PillView.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, PILL_W, PILL_H))
         self._pill_window.setContentView_(self._pill)
         self._main_h = AppKit.NSScreen.screens()[0].frame().size.height
-        self._dot_enabled = True
+        self._highlight_enabled = True
         self._place_pill()
 
     def _place_pill(self) -> None:
@@ -115,25 +110,37 @@ class Overlay:
         top = visible.y + 14
         self._pill_window.setFrameOrigin_((x, self._main_h - top - PILL_H))
 
-    def set_dot_enabled(self, enabled: bool) -> None:
-        self._dot_enabled = enabled
+    def set_highlight_enabled(self, enabled: bool) -> None:
+        self._highlight_enabled = enabled
         if not enabled:
-            self._dot_window.orderOut_(None)
+            self._highlight_window.orderOut_(None)
 
-    def move_dot(self, x: float, y: float) -> None:
-        if not self._dot_enabled:
+    def highlight(self, rect: Rect | None) -> None:
+        """Outline `rect` (global top-left coordinates), or hide the outline."""
+        window = self._highlight_window
+        if rect is None or not self._highlight_enabled:
+            window.orderOut_(None)
             return
-        self._dot_window.setFrameOrigin_((x - DOT / 2, self._main_h - y - DOT / 2))
-        if not self._dot_window.isVisible():
-            self._dot_window.orderFrontRegardless()
+        frame = AppKit.NSMakeRect(
+            rect.x - HIGHLIGHT_PAD,
+            self._main_h - rect.y - rect.h - HIGHLIGHT_PAD,
+            rect.w + 2 * HIGHLIGHT_PAD,
+            rect.h + 2 * HIGHLIGHT_PAD,
+        )
+        if window.isVisible():
+            AppKit.NSAnimationContext.beginGrouping()
+            AppKit.NSAnimationContext.currentContext().setDuration_(HIGHLIGHT_MOVE_S)
+            window.animator().setFrame_display_(frame, True)
+            AppKit.NSAnimationContext.endGrouping()
+        else:
+            window.setFrame_display_(frame, True)
+            window.orderFrontRegardless()
 
     def status(self, state: str, message: str) -> None:
         rgb = COLORS.get(state, COLORS["idle"])
         self._pill.rgb = rgb
         self._pill.message = message
         self._pill.setNeedsDisplay_(True)
-        self._dot.rgb = rgb
-        self._dot.setNeedsDisplay_(True)
         if message:
             self._place_pill()
             self._pill_window.orderFrontRegardless()

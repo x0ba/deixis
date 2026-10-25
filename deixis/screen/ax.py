@@ -30,6 +30,7 @@ INTERACTIVE_ROLES = TEXT_ROLES | {
     "AXStaticText",
     "AXHeading",
 }
+PASSIVE_ROLES = {"AXStaticText", "AXHeading", "AXImage"}
 CHROMIUM_BUNDLES = {
     "com.google.Chrome",
     "com.brave.Browser",
@@ -121,6 +122,29 @@ def frame(element) -> Rect | None:
     return Rect(point.x, point.y, dims.width, dims.height)
 
 
+def _param(element, name: str, value):
+    err, out = AS.AXUIElementCopyParameterizedAttributeValue(element, name, value, None)
+    return out if err == AX_OK else None
+
+
+def line_bounds(element, x: float, y: float) -> Rect | None:
+    """Frame of the line of text at a point, for text views that support it."""
+    point = AS.AXValueCreate(AS.kAXValueCGPointType, Quartz.CGPointMake(x, y))
+    at = _param(element, "AXRangeForPosition", point)
+    if at is None:
+        return None
+    ok, (index, _) = AS.AXValueGetValue(at, AS.kAXValueCFRangeType, None)
+    line = _param(element, "AXLineForIndex", index) if ok else None
+    span = _param(element, "AXRangeForLine", line) if line is not None else None
+    bounds = _param(element, "AXBoundsForRange", span) if span is not None else None
+    if bounds is None:
+        return None
+    ok, r = AS.AXValueGetValue(bounds, AS.kAXValueCGRectType, None)
+    if not ok or r.size.width <= 0 or r.size.height <= 0:
+        return None
+    return Rect(r.origin.x, r.origin.y, r.size.width, r.size.height)
+
+
 def set_frame(element, rect: Rect) -> bool:
     # Size first, then position, then size again: some apps clamp size to the
     # space left at the old position.
@@ -130,6 +154,65 @@ def set_frame(element, rect: Rect) -> bool:
     moved = set_attr(element, "AXPosition", pos)
     resized = set_attr(element, "AXSize", size)
     return moved or resized
+
+
+def role_and_frame(element) -> tuple[str | None, Rect | None]:
+    """Role and frame in one round trip to the app."""
+    err, values = AS.AXUIElementCopyMultipleAttributeValues(
+        element, ["AXRole", "AXPosition", "AXSize"], 0, None
+    )
+    if err != AX_OK or not values or len(values) != 3:
+        return None, None
+    role, pos, size = values
+    role = role if isinstance(role, str) else None
+    try:
+        ok_p, point = AS.AXValueGetValue(pos, AS.kAXValueCGPointType, None)
+        ok_s, dims = AS.AXValueGetValue(size, AS.kAXValueCGSizeType, None)
+    except (TypeError, ValueError):
+        return role, None
+    if not (ok_p and ok_s):
+        return role, None
+    return role, Rect(point.x, point.y, dims.width, dims.height)
+
+
+def web_area(element):
+    """The web page an element belongs to, if it's web content."""
+    current = element
+    for _ in range(60):
+        if current is None:
+            return None
+        role = attr(current, "AXRole")
+        if role == "AXWebArea":
+            return current
+        if role in ("AXWindow", "AXApplication"):
+            return None
+        current = attr(current, "AXParent")
+    return None
+
+
+WEB_SEARCH_KEYS = [
+    "AXControlSearchKey",
+    "AXLinkSearchKey",
+    "AXGraphicSearchKey",
+    "AXHeadingSearchKey",
+    "AXStaticTextSearchKey",
+]
+
+
+def visible_web_elements(page, limit: int = 1500) -> list:
+    """Every visible control, link, image, heading and text on a web page.
+
+    This is the search VoiceOver's rotor uses. Chromium and WebKit answer it from
+    their own tree in one call, unlike hit-testing, which Chromium answers from a
+    cache of the last hit test and fixes up later.
+    """
+    query = {
+        "AXSearchKey": WEB_SEARCH_KEYS,
+        "AXVisibleOnly": True,
+        "AXResultsLimit": limit,
+        "AXDirection": "AXDirectionNext",
+    }
+    return list(_param(page, "AXUIElementsForSearchPredicate", query) or [])
 
 
 def window_of(element):
@@ -144,6 +227,25 @@ def window_of(element):
             return current
         current = attr(current, "AXParent")
     return None
+
+
+def interactive(element):
+    """The element itself or its nearest interactive ancestor, a few levels up.
+
+    Text or an image inside a control (a button's label, a link's icon) gives
+    the control.
+    """
+    found, current = None, element
+    for _ in range(4):
+        if current is None:
+            break
+        role = attr(current, "AXRole")
+        if role in INTERACTIVE_ROLES:
+            if role not in PASSIVE_ROLES:
+                return current
+            found = found or current
+        current = attr(current, "AXParent")
+    return found
 
 
 def ancestors(element, limit: int = 8) -> list:

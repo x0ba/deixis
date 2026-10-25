@@ -8,7 +8,7 @@ Look at something on your Mac, say what you want, and Deixis does it.
 - "Deixis, put this on the left and that on the right." (look at one window, then the other)
 - "Deixis, write 'running ten minutes late' here." (looking at a text box)
 - "Deixis, what does this say?" / "read this to me"
-- "Deixis, scroll down." / "open Safari" / "go to sleep" / "wake up" / "recalibrate"
+- "Deixis, scroll down." / "open Safari" / "go to sleep" / "wake up" / "recalibrate" / "re-center"
 
 Saying only "Deixis" gets a "Yes?", and you can then answer without the wake word.
 
@@ -16,7 +16,7 @@ Saying only "Deixis" gets a "Yes?", and you can then answer without the wake wor
 
 | Piece | What it uses |
 | --- | --- |
-| Gaze | Webcam + MediaPipe Face Landmarker (iris, eyelid blendshapes, head pose), a 13-dot calibration, ridge regression, a One Euro filter. Or the pointer, for head-mouse and hardware eye-tracker users. |
+| Gaze | Webcam + MediaPipe Face Landmarker (iris, eyelid blendshapes, head pose), a 25-dot calibration plus 9 more after a head shift, ridge regression with the feature set picked per calibration, a One Euro filter, and a blue outline around the control or text you're looking at. Or the pointer, for head-mouse and hardware eye-tracker users. |
 | Listening | [Cartesia](https://www.cartesia.ai/) Ink-2 realtime STT with built-in turn detection, so there's no button to hold. |
 | Speaking | Cartesia Sonic 3.6, streamed. Falls back to macOS `say`. |
 | Context | macOS Accessibility: the window and element under your gaze, interactive elements near it (webcam gaze is off by 100-200 px), other places you looked while speaking, all windows, and an optional screenshot crop with your gaze marked. |
@@ -42,11 +42,21 @@ Grant them in System Settings → Privacy & Security:
 4. **Screen Recording** (optional): the screenshot crop around your gaze.
 
 On first launch with the webcam, calibration starts by itself: look at each
-dot until it moves. Esc cancels. Calibration is saved to
-`~/Library/Application Support/Deixis/calibration.npz`.
+dot until it moves, and shift your head a little when asked. It takes about a
+minute. Esc cancels. Calibration is saved to
+`~/Library/Application Support/Deixis/calibration.npz`, and the raw samples
+next to it in `calibration_samples.npz`.
 
-Deixis lives in the menu bar (the eye icon), with Pause, Calibrate Eyes, Show
-Gaze Dot, Gaze Source and Quit.
+While you look around, a blue outline settles on the button, link, field or
+text you're looking at, in any app or web page that supports Accessibility.
+That's what "this" means in a command. If the outline keeps landing next to
+what you're looking at (you moved your chair, the light changed), say
+"Deixis, re-center" and look at a single dot. That fixes a steady offset in
+two seconds. Recalibrate fully if it's off in different ways in different
+places.
+
+Deixis lives in the menu bar (the eye icon), with Pause, Calibrate Eyes,
+Re-center Eyes, Show Highlight, Gaze Source and Quit.
 
 ## Settings
 
@@ -59,6 +69,7 @@ All optional, in `.env`. See `.env.example`.
 | `DEIXIS_WAKE_WORDS` | `deixis,dixie,dexis,daxis,hey computer` | matched loosely near the start |
 | `DEIXIS_MODEL` | `claude-sonnet-5-5` | `claude-haiku-5-5` is faster |
 | `DEIXIS_SEND_SCREENSHOT` | `true` | |
+| `DEIXIS_HIGHLIGHT` | `true` | outline the control or text you're looking at |
 | `DEIXIS_VOICE_ID` | a Cartesia stock voice | |
 
 ## Code
@@ -72,7 +83,7 @@ deixis/
   screen/            Accessibility helpers, windows/screens, context snapshot
   actions/           window actions and synthetic input
   agent/             Claude tool loop and tool definitions
-  ui/                overlays (gaze dot, status pill) and calibration
+  ui/                overlays (highlight, status pill) and calibration
 ```
 
 `uv run pytest` runs the tests. `uv run ruff check` lints.

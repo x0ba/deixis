@@ -18,6 +18,8 @@ from deixis.gaze.history import Fixation, GazeHistory, primary
 from deixis.gaze.tracker import CameraGaze, MouseGaze
 from deixis.screen import ax
 from deixis.screen import context as screen_context
+from deixis.screen.ax import Rect
+from deixis.screen.snap import Snapper
 from deixis.ui.calibration import Calibrator
 from deixis.ui.overlay import Overlay
 from deixis.voice.listener import Listener, Turn
@@ -29,10 +31,12 @@ FOLLOW_UP_S = 10.0
 GAZE_LEAD_S = 0.5
 MOUSE_ERROR_PX = 25.0
 UNCALIBRATED_ERROR_PX = 400.0
-KEYTERMS = ["Deixis", "full screen", "split screen", "minimize", "text box"]
+SNAP_REACH_PX = (150.0, 360.0)
+KEYTERMS = ["Deixis", "full screen", "split screen", "minimize", "text box", "re-center"]
 SLEEP = re.compile(r"^(go to sleep|stop listening|sleep|pause)\W*$", re.I)
 WAKE = re.compile(r"^(wake up|start listening|resume|i'm back)\W*$", re.I)
 CALIBRATE = re.compile(r"^(re)?calibrat(e|ion)\b.*$", re.I)
+RECENTER = re.compile(r"^re-?cent(er|re)\b.*$", re.I)
 CANCEL = re.compile(r"^(never ?mind|cancel|nothing|stop)\W*$", re.I)
 
 
@@ -54,8 +58,11 @@ class MenuTarget(AppKit.NSObject):
     def calibrate_(self, sender):
         self.app.start_calibration()
 
-    def toggleDot_(self, sender):
-        self.app.toggle_dot()
+    def recenter_(self, sender):
+        self.app.start_calibration(quick=True)
+
+    def toggleHighlight_(self, sender):
+        self.app.toggle_highlight()
 
     def useCamera_(self, sender):
         self.app.switch_gaze("camera")
@@ -81,6 +88,8 @@ class DeixisApp:
         self._commands: queue.Queue[Turn] = queue.Queue()
         self._speaking = False
         self.gaze: CameraGaze | MouseGaze | None = None
+        self.snapper: Snapper | None = None
+        self._highlighted: Rect | None = None
         self.overlay: Overlay | None = None
 
     # setup
@@ -89,7 +98,7 @@ class DeixisApp:
         AppKit.NSApplication.sharedApplication()
         AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
         self.overlay = Overlay()
-        self.overlay.set_dot_enabled(self.config.show_gaze_dot)
+        self.overlay.set_highlight_enabled(self.config.show_highlight)
         self._build_menu()
 
         problems = []
@@ -147,8 +156,9 @@ class DeixisApp:
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         self._pause_item = self._add(menu, "Pause Listening", "togglePause:")
         self._add(menu, "Calibrate Eyes", "calibrate:")
-        self._dot_item = self._add(menu, "Show Gaze Dot", "toggleDot:")
-        self._dot_item.setState_(1 if self.config.show_gaze_dot else 0)
+        self._add(menu, "Re-center Eyes", "recenter:")
+        self._highlight_item = self._add(menu, "Show Highlight", "toggleHighlight:")
+        self._highlight_item.setState_(1 if self.config.show_highlight else 0)
         source = menu.addItemWithTitle_action_keyEquivalent_("Gaze Source", None, "")
         sub = AppKit.NSMenu.alloc().init()
         self._camera_item = self._add(sub, "Webcam (eye tracking)", "useCamera:")
@@ -169,6 +179,10 @@ class DeixisApp:
     def _start_gaze(self, source: str) -> None:
         if self.gaze is not None:
             self.gaze.stop()
+        if self.snapper is not None:
+            self.snapper.stop()
+        self._highlighted = None
+        self.overlay.highlight(None)
         if source == "camera":
             self.gaze = CameraGaze(
                 self.history,
@@ -176,25 +190,37 @@ class DeixisApp:
                 self.config.calibration_path,
                 self.config.camera_index,
             )
-            self.overlay.set_dot_enabled(self._dot_item.state() == 1)
         else:
             self.gaze = MouseGaze(self.history)
-            self.overlay.set_dot_enabled(False)
-        self.gaze.on_point = lambda x, y: _on_main(self.overlay.move_dot, x, y)
+        low, high = SNAP_REACH_PX
+        self.snapper = Snapper(lambda: min(max(3 * self.gaze_error_px(), low), high))
+        self.snapper.start()
+        self.gaze.on_point = self._on_gaze_point
         self.gaze.start()
         self._camera_item.setState_(1 if source == "camera" else 0)
         self._mouse_item.setState_(1 if source == "mouse" else 0)
         self._state_item.setTitle_(f"Gaze: {'webcam' if source == 'camera' else 'pointer'}")
+
+    def _on_gaze_point(self, x: float, y: float) -> None:
+        snapper = self.snapper
+        if snapper is None:
+            return
+        rect = snapper.update(time.monotonic(), x, y)
+        if rect != self._highlighted:
+            self._highlighted = rect
+            _on_main(self.overlay.highlight, rect)
 
     def switch_gaze(self, source: str) -> None:
         self._start_gaze(source)
         if source == "camera" and not self.gaze.calibrated:
             self.start_calibration()
 
-    def toggle_dot(self) -> None:
-        on = self._dot_item.state() != 1
-        self._dot_item.setState_(1 if on else 0)
-        self.overlay.set_dot_enabled(on and isinstance(self.gaze, CameraGaze))
+    def toggle_highlight(self) -> None:
+        on = self._highlight_item.state() != 1
+        self._highlight_item.setState_(1 if on else 0)
+        self.overlay.set_highlight_enabled(on)
+        if on:
+            self.overlay.highlight(self._highlighted)
 
     def gaze_error_px(self) -> float:
         if isinstance(self.gaze, MouseGaze):
@@ -203,7 +229,7 @@ class DeixisApp:
             return self.gaze.model.cv_error_px
         return UNCALIBRATED_ERROR_PX
 
-    def start_calibration(self) -> None:
+    def start_calibration(self, quick: bool = False) -> None:
         if not isinstance(self.gaze, CameraGaze):
             self.speaker.say("Calibration is only for webcam eye tracking.")
             return
@@ -212,16 +238,19 @@ class DeixisApp:
             return
         if self._calibrator is not None:
             return
-        self.overlay.set_dot_enabled(False)
-        self.speaker.say("Let's calibrate. Look at each dot until it moves.")
-        self._calibrator = Calibrator(self.gaze, self._calibrated)
+        quick = quick and self.gaze.calibrated
+        self.overlay.set_highlight_enabled(False)
+        self.speaker.say(
+            "Look at the dot." if quick else "Let's calibrate. Look at each dot until it moves."
+        )
+        self._calibrator = Calibrator(self.gaze, self._calibrated, self.speaker.say, quick)
         self._calibrator.start()
 
     def _calibrated(self, model, message: str) -> None:
         self._calibrator = None
         if model is not None:
             self.gaze.set_model(model)
-        self.overlay.set_dot_enabled(self._dot_item.state() == 1)
+        self.overlay.set_highlight_enabled(self._highlight_item.state() == 1)
         self._show("idle" if model else "error", message)
         self._hide_later(5.0)
         self.speaker.say(message)
@@ -310,6 +339,9 @@ class DeixisApp:
         if CALIBRATE.match(command):
             _on_main(self.start_calibration)
             return
+        if RECENTER.match(command):
+            _on_main(self.start_calibration, True)
+            return
         self._commands.put(Turn(command, turn.started, turn.ended))
 
     # commands
@@ -322,8 +354,14 @@ class DeixisApp:
             if latest is not None and time.monotonic() - latest[0] < 2.0:
                 main = Fixation(latest[1], latest[2], latest[0], latest[0])
         others = [f for f in fixations if f is not main][-4:]
+        snapper = self.snapper
+        highlighted = snapper.element_during(start - GAZE_LEAD_S, end) if snapper else None
         return screen_context.build(
-            main, others, self.gaze_error_px(), want_image=self.config.send_screenshot
+            main,
+            others,
+            self.gaze_error_px(),
+            want_image=self.config.send_screenshot,
+            highlighted=highlighted,
         )
 
     def _refresh(self) -> screen_context.Snapshot:
@@ -341,7 +379,7 @@ class DeixisApp:
                     said,
                     snapshot,
                     refresh=self._refresh,
-                    recalibrate=lambda: _on_main(self.start_calibration),
+                    recalibrate=lambda quick=False: _on_main(self.start_calibration, quick),
                     on_step=lambda step, said=said: self._show("working", f"{said} — {step}"),
                 )
             except Exception as err:
@@ -356,6 +394,8 @@ class DeixisApp:
     def quit(self) -> None:
         if self.gaze is not None:
             self.gaze.stop()
+        if self.snapper is not None:
+            self.snapper.stop()
         if self.listener is not None:
             self.listener.stop()
         sys.stdout.flush()

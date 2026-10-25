@@ -106,17 +106,6 @@ def describe(
     return out
 
 
-def _interactive(element):
-    current = element
-    for _ in range(4):
-        if current is None:
-            return None
-        if ax.attr(current, "AXRole") in ax.INTERACTIVE_ROLES:
-            return current
-        current = ax.attr(current, "AXParent")
-    return None
-
-
 def _nearby(app, gx: float, gy: float, radius: float, registry: Registry, skip) -> list[dict]:
     # Fine enough to land on single-line fields (~30 px tall) anywhere in the radius.
     n = max(2, int(radius // GRID_SPACING_PX))
@@ -129,7 +118,7 @@ def _nearby(app, gx: float, gy: float, radius: float, registry: Registry, skip) 
     for dy in offsets:
         for dx in offsets:
             hit = ax.element_at(app, gx + dx, gy + dy)
-            element = _interactive(hit) if hit is not None else None
+            element = ax.interactive(hit) if hit is not None else None
             if element is None:
                 continue
             rect = ax.frame(element)
@@ -198,7 +187,9 @@ def build(
     other_fixations: list[Fixation],
     gaze_error_px: float,
     want_image: bool,
+    highlighted=None,
 ) -> Snapshot:
+    """`highlighted` is the element outlined on screen while the user spoke, if any."""
     registry = Registry()
     data: dict = {}
 
@@ -240,6 +231,8 @@ def build(
         "dwell_ms": round(gaze.duration * 1000),
         "typical_error_px": round(gaze_error_px),
     }
+    if highlighted is not None:
+        data["gaze"]["highlighted"] = describe(highlighted, registry, gx, gy)
     hit = desktop.window_at(gx, gy)
     if hit is not None and hit.number in by_number:
         key = by_number[hit.number]

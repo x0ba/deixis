@@ -156,8 +156,14 @@ TOOLS = [
     },
     {
         "name": "recalibrate",
-        "description": "Start eye-tracking calibration (the user follows dots with their eyes).",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": "Start eye-tracking calibration (the user follows dots with their eyes). "
+        "Use quick=true to re-center with a single dot when the gaze is consistently off "
+        "in one direction; use a full calibration when it is wrong in different ways in "
+        "different places.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"quick": {"type": "boolean"}},
+        },
     },
 ]
 
@@ -186,7 +192,7 @@ class Executor:
         self,
         snapshot: Snapshot,
         refresh: Callable[[], Snapshot],
-        recalibrate: Callable[[], None],
+        recalibrate: Callable[[bool], None],
     ):
         self.snapshot = snapshot
         self._refresh = refresh
@@ -256,8 +262,9 @@ class Executor:
                 self.snapshot = self._refresh()
                 return json.dumps(self.snapshot.data), self.snapshot
             if name == "recalibrate":
-                self._recalibrate()
-                return "calibration started", None
+                quick = bool(args.get("quick"))
+                self._recalibrate(quick)
+                return "re-centering started" if quick else "calibration started", None
             return f"unknown tool {name}", None
         except ActionError as err:
             return f"error: {err}", None
