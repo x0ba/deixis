@@ -1,9 +1,9 @@
 """Finding the wake word in a transcript.
 
-Speech-to-text spells the wake word several ways ("Gaze's", "Gauze"), so
+Speech-to-text spells the wake word several ways ("Peek's", "Peak"), so
 matching is fuzzy. The wake word must start a clause: the transcript itself,
 or the text after punctuation. In a noisy room the transcript often starts
-with other people's speech ("so loud in here. Gaze, ..."), so every clause is
+with other people's speech ("so loud in here. Peek, ..."), so every clause is
 checked and the last match wins.
 """
 

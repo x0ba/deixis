@@ -52,22 +52,61 @@ can't hear you while it's talking, so you have to wait for it to finish.
 
 ## Setup
 
+### What you need
+
+- A Mac with a webcam and a microphone. The built-in ones are fine;
+  headphones help Peek tell your voice from its own.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which also
+  installs the right Python for you: `brew install uv`, or
+  `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- Two API keys:
+  - **Anthropic**, for understanding what you ask:
+    [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)
+  - **Cartesia**, for listening and speaking:
+    [play.cartesia.ai/keys](https://play.cartesia.ai/keys)
+
+If you already use a head mouse or a hardware eye tracker that moves the
+pointer, you don't need the webcam: set `PEEK_SOURCE=mouse` (see
+[Settings](#settings)).
+
+### Install and run
+
 ```bash
+git clone https://github.com/x0ba/deixis.git
+cd deixis
 uv sync
-cp .env.example .env   # add CARTESIA_API_KEY and ANTHROPIC_API_KEY
+cp .env.example .env
+```
+
+Open `.env` in any text editor and paste your keys after `CARTESIA_API_KEY=`
+and `ANTHROPIC_API_KEY=`. Then start Peek:
+
+```bash
 uv run peek
 ```
+
+Leave the terminal open: Peek runs as long as it does, and logs what it heard
+and did there. To stop it, choose Quit Peek from the eye icon in the menu bar,
+or press Ctrl+C in the terminal.
 
 `models/face_landmarker.task` is MediaPipe's public Face Landmarker model
 (`https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`).
 
-macOS asks for permissions for the app you launch from (Terminal, Cursor, ...).
-Grant them in System Settings → Privacy & Security:
+### Permissions
+
+macOS asks for permissions for the app you launch from (Terminal, Cursor, ...),
+not for Peek itself. Grant them in System Settings → Privacy & Security:
 
 1. **Accessibility**: reading the screen and acting on it. Restart Peek after granting it.
-2. **Camera**: eye tracking.
+2. **Camera**: eye tracking. If the camera doesn't come on after you allow it, restart Peek.
 3. **Microphone**: listening.
 4. **Screen Recording** (optional): the screenshot crop around your gaze.
+
+If a permission prompt appears while the calibration dots are on screen, press
+Esc to cancel calibration, answer the prompt, then choose Calibrate Eyes from
+the menu bar.
+
+### Calibration
 
 On first launch with the webcam, calibration starts by itself: look at each
 dot until it moves, and shift your head a little when asked. It takes about a
@@ -89,6 +128,30 @@ places.
 Peek lives in the menu bar (the eye icon), with Pause, Calibrate Eyes,
 Re-center Eyes, Show Highlight, Gaze Source and Quit.
 
+## Your first five minutes
+
+1. Start Peek and follow the calibration dots. At the end Peek tells you its
+   accuracy in pixels; 100 to 200 is typical for a webcam.
+2. Look around the screen. The blue outline follows your eyes. That's what
+   Peek will act on when you say "this".
+3. Look at a window and say **"Peek, make this full screen."** You hear a tink
+   when Peek starts listening.
+4. Without saying "Peek" again, say **"now exit full screen."** You're still in
+   the conversation, so follow-ups don't need the wake word.
+5. Say **"thanks."** The pop means Peek has stopped listening until you say
+   "Peek" again.
+6. When you want Peek to ignore you for a while, say **"Peek, go to sleep."**
+   Say **"Peek, wake up"** to bring it back.
+
+The pill at the top of the screen shows what Peek is doing:
+
+| Dot | Meaning |
+| --- | --- |
+| Blue | listening |
+| Amber | working on your request |
+| Green | speaking |
+| Red | something's wrong; the text says what |
+
 ## Settings
 
 All optional, in `.env`. See `.env.example`.
@@ -105,7 +168,51 @@ All optional, in `.env`. See `.env.example`.
 | `PEEK_BARGE_IN` | `true` | keep the mic on while Peek talks so you can interrupt it |
 | `PEEK_CONVERSATION_S` | `15` | how long Peek keeps listening without the wake word after an exchange |
 | `PEEK_SOUNDS` | `true` | the tink and pop when a conversation starts and ends |
+| `PEEK_WINK_CLICK` | `true` | wink one eye to click what's outlined (webcam only) |
+| `PEEK_CAMERA` | `0` | which camera to use if you have more than one |
 | `PEEK_VOICE_ID` | a Cartesia stock voice | |
+
+Restart Peek after changing `.env`.
+
+## Troubleshooting
+
+The terminal Peek runs in logs every sentence it heard (`heard: ...`) and what
+it did about it, which is usually the quickest way to see what went wrong.
+
+**Peek doesn't respond when I talk.**
+- Check the pill: if it says "Speech connection dropped", your
+  `CARTESIA_API_KEY` is wrong or you're offline.
+- Make sure the app you launched Peek from has Microphone access.
+- Peek may be asleep. Say "Peek, wake up", or choose Resume Listening from the
+  menu bar.
+- If the log shows nothing while you talk, the noise gate may be cutting you
+  off. Lower `PEEK_NOISE_GATE_DB`, or set it to `0`.
+
+**Peek says "Sorry, something went wrong on my end."** Check
+`ANTHROPIC_API_KEY` and, if you set it, `PEEK_MODEL`. The terminal shows the
+actual error.
+
+**Calibration says it couldn't see my eyes.** Face the camera with your face
+evenly lit and nothing bright behind you, then say "Peek, calibrate" or choose
+Calibrate Eyes. If the pill says "Camera problem", allow Camera access and
+restart Peek.
+
+**The outline lands next to what I'm looking at.** Say "Peek, re-center" and
+look at the dot. If it's off in different ways in different parts of the
+screen, recalibrate instead.
+
+**Peek can't do anything on screen, or says it can't find things.** Allow
+Accessibility for the app you launched Peek from, then restart Peek.
+
+**Peek cuts itself off or answers its own voice.** Use headphones, or set
+`PEEK_BARGE_IN=false`.
+
+**Peek reacts to things I said to someone else.** After each exchange Peek
+keeps listening for `PEEK_CONVERSATION_S` seconds (15 by default). Say
+"thanks" to end the conversation right away, or lower the setting.
+
+**Things get clicked when I didn't mean to.** That's wink-to-click. Set
+`PEEK_WINK_CLICK=false`.
 
 ## Code
 

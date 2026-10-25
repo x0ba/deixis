@@ -45,7 +45,7 @@ def screen_for(rect: Rect) -> Screen | None:
 
 
 def windows() -> list[WindowInfo]:
-    """Normal app windows, front to back, excluding Gaze's own overlays."""
+    """Normal app windows, front to back, excluding Peek's own overlays."""
     options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
     raw = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
     me = os.getpid()

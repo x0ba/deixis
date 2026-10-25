@@ -456,8 +456,9 @@ class GazeApp:
     # When the user says "Peek", the highlight pins to what they're looking at
     # and stays there until the request is done, so they can look away while
     # they finish speaking and while Peek works on it. Saying just "Peek" and
-    # pausing keeps the pin for the request that follows. It lets go while Peek asks them something, so they can
-    # look at their answer, then pins what they looked at.
+    # pausing keeps the pin for the request that follows. It lets go while Peek
+    # asks them something, so they can look at their answer, then pins what they
+    # looked at.
 
     def _pin(self, start: float | None = None, end: float | None = None) -> None:
         if self.snapper is not None:
