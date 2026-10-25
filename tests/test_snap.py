@@ -1,8 +1,8 @@
 import random
 
 from peek.screen.ax import Rect
-from peek.screen.snap import Snapper, ring, search_rings
-from peek.ui.calibration import FULL_PLAN, GRID, HEAD_GRID, RECENTER_PLAN, Dot
+from peek.screen.snap import Candidate, Snapper, likelihood, ring, search_rings
+from peek.ui.calibration import CHECK, FULL_PLAN, GRID, HEAD_GRID, PURSUIT, RECENTER_PLAN, Dot, Fit
 
 BUTTON = Rect(500, 300, 80, 24)
 LINK = Rect(500, 380, 80, 24)
@@ -15,14 +15,10 @@ class FakeScreen:
 
     def lookup(self, x, y, reach):
         self.calls.append((x, y, reach))
-        near = [(r.distance(x, y), n) for n, r in self.frames.items() if r.distance(x, y) <= reach]
-        if not near:
-            return None
-        name = min(near)[1]
-        return name, self.frames[name]
+        return [Candidate(n, r) for n, r in self.frames.items() if r.distance(x, y) <= reach]
 
-    def snapper(self, reach=100.0):
-        return Snapper(lambda: reach, self.lookup, frame=self.frames.get)
+    def snapper(self, error=40.0):
+        return Snapper(lambda: error, self.lookup, frame=self.frames.get)
 
 
 def hold(snapper, x, y, start, seconds=0.3, jitter=0.0):
@@ -91,7 +87,12 @@ def test_follows_a_moving_element_and_lets_go_when_it_disappears():
 def test_a_line_of_a_text_view_scrolls_with_the_view():
     frames = {"doc": Rect(100, 100, 600, 800)}
     line = Rect(105, 300, 590, 16)
-    snapper = Snapper(lambda: 100.0, lambda x, y, reach: ("doc", line), frame=frames.get)
+
+    def lookup(x, y, reach):
+        dy = frames["doc"].y - 100
+        return [Candidate("doc", Rect(line.x, line.y + dy, line.w, line.h))]
+
+    snapper = Snapper(lambda: 40.0, lookup, frame=frames.get)
     _, t = hold(snapper, 400, 308, 0.0)
     frames["doc"] = Rect(100, 60, 600, 800)
     drawn, _ = hold(snapper, 400, 268, t, seconds=0.6)
@@ -148,5 +149,106 @@ def test_pinned_highlight_follows_its_element_and_hides_when_it_goes():
 def test_calibration_plans():
     assert len({(d.fx, d.fy) for d in GRID}) == 25
     assert {(d.fx, d.fy) for d in HEAD_GRID} <= {(d.fx, d.fy) for d in GRID}
-    assert [s for s in FULL_PLAN if isinstance(s, Dot)] == GRID + HEAD_GRID
+    assert [s for s in FULL_PLAN if isinstance(s, Dot)] == GRID + HEAD_GRID + CHECK
+    fit = FULL_PLAN.index(next(s for s in FULL_PLAN if isinstance(s, Fit)))
+    assert FULL_PLAN.index(PURSUIT) < fit < FULL_PLAN.index(CHECK[0])
+    assert all(d.check for d in CHECK)
+    assert not {(d.fx, d.fy) for d in CHECK} & {(d.fx, d.fy) for d in GRID}
     assert [s for s in RECENTER_PLAN if isinstance(s, Dot)] == [Dot(0.5, 0.5)]
+
+
+TOOLBAR = {f"b{i}": Rect(400 + 70 * i, 300, 60, 28) for i in range(6)}
+
+
+def look(snapper, name, start, seconds, rng, noise=45.0, bias=(0.0, 0.0)):
+    """Webcam-like gaze at a toolbar button: filtered (so correlated) noise plus a bias.
+    Returns the highlighted names, one per frame."""
+    cx, cy = TOOLBAR[name].center
+    ex = ey = 0.0
+    t, shown = start, []
+    names = {r: n for n, r in TOOLBAR.items()}
+    while t < start + seconds:
+        ex = 0.8 * ex + 0.6 * rng.gauss(0, noise)
+        ey = 0.8 * ey + 0.6 * rng.gauss(0, noise)
+        snapper.update(t, cx + bias[0] + ex, cy + bias[1] + ey)
+        snapper.step(t)
+        drawn = snapper.update(t, cx + bias[0] + ex, cy + bias[1] + ey)
+        shown.append(names.get(drawn))
+        t += 1 / 30
+    return shown, t
+
+
+def switches(shown):
+    return sum(1 for a, b in zip(shown, shown[1:], strict=False) if a != b)
+
+
+def test_noisy_gaze_settles_on_the_button_without_flicker():
+    rng = random.Random(3)
+    snapper = FakeScreen(**TOOLBAR).snapper(error=60.0)
+    shown, t = look(snapper, "b2", 0.0, 2.0, rng)
+    assert shown[-1] == "b2"
+    assert switches(shown[10:]) <= 1
+    shown, t = look(snapper, "b4", t, 1.5, rng)
+    first = shown.index("b4")
+    assert first / 30 < 1.0
+    assert shown[-1] == "b4"
+    assert switches(shown[first:]) <= 2
+
+
+def test_noisy_gaze_mostly_shows_the_right_button():
+    rng = random.Random(7)
+    hits = total = 0
+    for target in ("b1", "b3", "b5", "b0", "b4"):
+        snapper = FakeScreen(**TOOLBAR).snapper(error=60.0)
+        shown, _ = look(snapper, target, 0.0, 2.0, rng)
+        hits += sum(s == target for s in shown[15:])
+        total += len(shown[15:])
+    assert hits / total > 0.8
+
+
+def test_likelihood_prefers_small_targets_under_the_gaze():
+    small, big = Rect(100, 100, 40, 20), Rect(0, 0, 800, 400)
+    assert likelihood(small, 120, 110, 30.0) > 10 * likelihood(big, 120, 110, 30.0)
+    assert likelihood(small, 400, 300, 30.0) < likelihood(big, 400, 300, 30.0)
+
+
+def test_slow_lookups_run_in_the_background():
+    import threading
+    import time as clock
+
+    release = threading.Event()
+
+    def slow(x, y, reach):
+        release.wait(2.0)
+        return [Candidate("button", BUTTON)]
+
+    snapper = Snapper(lambda: 40.0, slow, frame={"button": BUTTON}.get)
+    snapper.start()
+    try:
+        drawn, steps_before = None, 0
+        deadline = clock.monotonic() + 3.0
+        while drawn is None and clock.monotonic() < deadline:
+            now = clock.monotonic()
+            drawn = snapper.update(now, 540, 312)
+            if not release.is_set() and snapper._voted_until > 0:
+                steps_before += 1  # the snap thread kept stepping while the lookup waited
+                if steps_before >= 3:
+                    release.set()
+            clock.sleep(1 / 30)
+        assert steps_before >= 3
+        assert drawn == BUTTON
+    finally:
+        snapper.stop()
+
+
+def test_neighbours_still_switch_when_the_overall_error_is_large():
+    """A big calibration error is mostly a steady offset; the jitter stays small, so
+    looking one button over should still move the highlight one button over."""
+    rng = random.Random(11)
+    snapper = FakeScreen(**TOOLBAR).snapper(error=190.0)
+    shown, t = look(snapper, "b2", 0.0, 1.5, rng, noise=20.0, bias=(10.0, -30.0))
+    assert shown[-1] == "b2"
+    shown, t = look(snapper, "b3", t, 1.5, rng, noise=20.0, bias=(10.0, -30.0))
+    assert shown[-1] == "b3"
+    first = shown.index("b3")
+    assert first / 30 < 0.7

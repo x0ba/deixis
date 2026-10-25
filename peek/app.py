@@ -37,8 +37,9 @@ ASK_TIMEOUT_S = 30.0
 GAZE_LEAD_S = 0.5
 MOUSE_ERROR_PX = 25.0
 UNCALIBRATED_ERROR_PX = 400.0
-SNAP_REACH_PX = (150.0, 360.0)
 WINK_LOOKBACK_S = 0.4  # what was highlighted just before the eye shut
+CLICK_LOOK_S = (0.4, 0.0)  # people look at what they click from just before to the click
+WINK_LOOK_S = (0.6, 0.05)
 KEYTERMS = ["Peek", "full screen", "split screen", "minimize", "text box", "re-center"]
 SLEEP = re.compile(r"^(go to sleep|stop listening|sleep|pause)\W*$", re.I)
 WAKE = re.compile(r"^(wake up|start listening|resume|i'm back)\W*$", re.I)
@@ -147,6 +148,9 @@ class GazeApp:
         self.overlay = Overlay()
         self.overlay.set_highlight_enabled(self.config.show_highlight)
         self._build_menu()
+        self._click_monitor = AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            AppKit.NSEventMaskLeftMouseDown, self._on_mouse_down
+        )
 
         problems = []
         if not ax.is_trusted(prompt=True):
@@ -239,8 +243,7 @@ class GazeApp:
             )
         else:
             self.gaze = MouseGaze(self.history)
-        low, high = SNAP_REACH_PX
-        self.snapper = Snapper(lambda: min(max(3 * self.gaze_error_px(), low), high))
+        self.snapper = Snapper(self.gaze_error_px)
         self.snapper.start()
         self.gaze.on_point = self._on_gaze_point
         if isinstance(self.gaze, CameraGaze) and self.config.wink_click:
@@ -265,11 +268,35 @@ class GazeApp:
         if snapper is None or self.sleeping or self._calibrator is not None:
             return
         element = snapper.pinned_element() if snapper.pinned else None
-        element = element or snapper.element_during(started - WINK_LOOKBACK_S, started)
+        if element is None:
+            lookback = (started - WINK_LOOKBACK_S, started)
+            element = snapper.element_during(*lookback)
+            rect = snapper.rect_during(*lookback)
+            if rect is not None:
+                before, after = WINK_LOOK_S
+                self._correct_drift(started - before, started - after, rect, "wink")
         if element is None:
             log.info("wink: nothing highlighted to click")
             return
         threading.Thread(target=self._wink_click, args=(element,), daemon=True).start()
+
+    def _on_mouse_down(self, _event) -> None:
+        """A real click shows where the user was looking, so it corrects drift."""
+        if self.sleeping or self._calibrator is not None:
+            return
+        point = AppKit.NSEvent.mouseLocation()
+        main_h = AppKit.NSScreen.screens()[0].frame().size.height
+        now = time.monotonic()
+        before, after = CLICK_LOOK_S
+        self._correct_drift(now - before, now - after, (point.x, main_h - point.y), "click")
+
+    def _correct_drift(self, start: float, end: float, target, source: str) -> None:
+        gaze = self.gaze
+        if not self.config.learn_from_clicks or not isinstance(gaze, CameraGaze):
+            return
+        step = gaze.correct_drift(start, end, target)
+        if step is not None:
+            log.info("drift corrected from %s by (%.0f, %.0f) px", source, *step)
 
     def _wink_click(self, element) -> None:
         if self.config.sounds:
@@ -295,7 +322,7 @@ class GazeApp:
         if isinstance(self.gaze, MouseGaze):
             return MOUSE_ERROR_PX
         if isinstance(self.gaze, CameraGaze) and self.gaze.model is not None:
-            return self.gaze.model.cv_error_px
+            return self.gaze.model.error_px
         return UNCALIBRATED_ERROR_PX
 
     def start_calibration(self, quick: bool = False) -> None:

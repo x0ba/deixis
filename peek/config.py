@@ -32,6 +32,7 @@ class Config:
     conversation_s: float = 15.0
     sounds: bool = True
     wink_click: bool = True
+    learn_from_clicks: bool = True
     face_model_path: Path = ROOT / "models" / "face_landmarker.task"
     calibration_path: Path = SUPPORT_DIR / "calibration.npz"
 
@@ -55,4 +56,5 @@ def load_config() -> Config:
         conversation_s=float(os.environ.get("PEEK_CONVERSATION_S") or 15),
         sounds=_flag("PEEK_SOUNDS", True),
         wink_click=_flag("PEEK_WINK_CLICK", True),
+        learn_from_clicks=_flag("PEEK_LEARN_FROM_CLICKS", True),
     )

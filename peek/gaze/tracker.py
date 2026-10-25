@@ -8,22 +8,28 @@ hardware eye trackers that drive the pointer.
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
+from peek.gaze import drift
 from peek.gaze import features as feat
 from peek.gaze.filter import OneEuro
 from peek.gaze.history import GazeHistory
 from peek.gaze.model import GazeModel
 from peek.gaze.wink import WinkDetector
+from peek.screen.ax import Rect
 
 log = logging.getLogger(__name__)
 
 PointListener = Callable[[float, float], None]
 FeatureListener = Callable[[float, np.ndarray], None]
 WinkListener = Callable[[float], None]
+
+FEATURES_KEEP_S = 5.0
 
 
 class CameraGaze:
@@ -46,6 +52,8 @@ class CameraGaze:
         self.error: str | None = None
         self._filter = OneEuro()
         self._wink = WinkDetector()
+        self._recent: deque[tuple[float, np.ndarray]] = deque()
+        self._recent_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -57,6 +65,28 @@ class CameraGaze:
         model.save(self.calibration_path)
         self.model = model
         self._filter.reset()
+
+    def correct_drift(self, start: float, end: float, target: Rect | tuple[float, float]):
+        """Nudge the model toward `target`, where the user looked between `start` and
+        `end` (they clicked it). Returns the shift applied, or None."""
+        model = self.model
+        if model is None:
+            return None
+        with self._recent_lock:
+            rows = [v for t, v in self._recent if start <= t <= end]
+        if not rows:
+            return None
+        step = drift.shift(model.predict(np.array(rows)), target, model.error_px)
+        if step is None:
+            return None
+        if self.model is not model:  # recalibrated meanwhile
+            return None
+        self.model = replace(model, offset=model.offset + step)
+        try:
+            self.model.save(self.calibration_path)
+        except OSError:
+            log.warning("could not save the drift correction", exc_info=True)
+        return step
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="camera-gaze", daemon=True)
@@ -130,6 +160,10 @@ class CameraGaze:
             vector = feat.extract(landmarks, matrix, blend, width, height)
         except ValueError:
             return
+        with self._recent_lock:
+            self._recent.append((now, vector))
+            while self._recent[0][0] < now - FEATURES_KEEP_S:
+                self._recent.popleft()
         if self.on_features:
             self.on_features(now, vector)
         if self.model is None:

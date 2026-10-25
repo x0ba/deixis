@@ -4,14 +4,17 @@ Dots appear one at a time on the main screen. The user just looks at each
 one; nothing needs clicking. Esc cancels. Main thread only.
 
 Full calibration covers a 5x5 grid, then repeats 9 of the points after the
-user shifts their head, so the model sees more than one posture. Re-centering
-shows a single dot and only corrects the model's offset, for drift during a
-session.
+user shifts their head, so the model sees more than one posture. Then a dot
+glides across the screen for the user to follow, which adds many samples in
+between the grid points. The model is fitted with and without those, and both
+are tried on a few fresh dots; the better one is kept, and its error on those
+dots is the accuracy Peek reports and uses. Re-centering shows a single dot
+and only corrects the model's offset, for drift during a session.
 """
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import AppKit
 import numpy as np
@@ -24,6 +27,10 @@ COLLECT_S = 1.0
 INTRO_S = 2.5
 MIN_SAMPLES = 8
 MIN_COVERAGE = 0.6
+PURSUIT_PX_S = 380.0
+PURSUIT_SKIP_S = 0.6  # the eyes need a moment to lock on to the moving dot
+PURSUIT_LAG_S = 0.08  # camera frames arrive a little after they're taken
+MIN_CHECK_DOTS = 3
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,40 @@ class Pause:
 class Dot:
     fx: float
     fy: float
+    check: bool = False  # measures the fitted model instead of training it
+
+
+@dataclass(frozen=True)
+class Pursuit:
+    """A dot moving at a steady speed through `path` (screen fractions)."""
+
+    path: tuple[tuple[float, float], ...]
+
+    def legs(self, size: tuple[float, float]) -> list[tuple[np.ndarray, np.ndarray, float]]:
+        points = [np.array((fx * size[0], fy * size[1])) for fx, fy in self.path]
+        return [
+            (a, b, float(np.linalg.norm(b - a))) for a, b in zip(points, points[1:], strict=False)
+        ]
+
+    def seconds(self, size: tuple[float, float]) -> float:
+        return sum(length for *_, length in self.legs(size)) / PURSUIT_PX_S
+
+    def at(self, elapsed: float, size: tuple[float, float]) -> tuple[float, float]:
+        """Where the dot is `elapsed` seconds in."""
+        left = max(elapsed, 0.0) * PURSUIT_PX_S
+        legs = self.legs(size)
+        for a, b, length in legs:
+            if left <= length and length > 0:
+                x, y = a + (b - a) * (left / length)
+                return float(x), float(y)
+            left -= length
+        x, y = legs[-1][1]
+        return float(x), float(y)
+
+
+@dataclass(frozen=True)
+class Fit:
+    """Fit the model on what's been collected so far."""
 
 
 _STEPS = (0.06, 0.28, 0.5, 0.72, 0.94)
@@ -46,6 +87,13 @@ GRID = [
     for fx in (_STEPS if row % 2 == 0 else _STEPS[::-1])
 ]
 HEAD_GRID = [Dot(fx, fy) for fy in (0.06, 0.5, 0.94) for fx in (0.06, 0.5, 0.94)]
+PURSUIT = Pursuit(
+    ((0.06, 0.06), (0.94, 0.06), (0.94, 0.5), (0.06, 0.5), (0.06, 0.94), (0.94, 0.94))
+)
+CHECK = [
+    Dot(fx, fy, check=True)
+    for fx, fy in ((0.17, 0.17), (0.83, 0.17), (0.5, 0.39), (0.17, 0.83), (0.83, 0.83))
+]
 FULL_PLAN = [
     Pause("Look at each dot until it moves. Press Esc to cancel.", INTRO_S),
     *GRID,
@@ -55,6 +103,11 @@ FULL_PLAN = [
         spoken="Now move your head a little, and keep following the dots.",
     ),
     *HEAD_GRID,
+    Pause("Now follow the moving dot with your eyes.", 2.5, spoken="Now follow the moving dot."),
+    PURSUIT,
+    Fit(),
+    Pause("Last few dots, to check how it went.", 2.0),
+    *CHECK,
 ]
 RECENTER_PLAN = [Pause("Look at the dot.", 1.0), Dot(0.5, 0.5)]
 
@@ -117,6 +170,9 @@ class Samples:
     groups: np.ndarray
     visits: np.ndarray
 
+    def __len__(self) -> int:
+        return len(self.features)
+
 
 class Calibrator:
     """Plays one dot plan. `done(model or None, message)` is called at the end.
@@ -136,7 +192,7 @@ class Calibrator:
         self._say = say
         self._quick = quick
         self._plan = RECENTER_PLAN if quick else FULL_PLAN
-        positions = sorted({(d.fx, d.fy) for d in self._plan if isinstance(d, Dot)})
+        positions = sorted({(d.fx, d.fy) for d in self._plan if isinstance(d, Dot) and not d.check})
         self._group = {p: i for i, p in enumerate(positions)}
         screen = AppKit.NSScreen.screens()[0]
         frame = screen.frame()
@@ -158,6 +214,9 @@ class Calibrator:
         )
         self._window.setContentView_(self._view)
         self._samples: list[tuple[np.ndarray, tuple[float, float], int, int]] = []
+        self._pursuit: list[tuple[np.ndarray, tuple[float, float]]] = []
+        self._checks: list[tuple[np.ndarray, tuple[float, float], int]] = []
+        self._candidates: list[gaze_model.GazeModel] = []
         self._index = 0
         self._phase_start = 0.0
         self._collecting = False
@@ -178,9 +237,17 @@ class Calibrator:
 
     def _on_features(self, t: float, vector: np.ndarray) -> None:
         step = self._plan[self._index] if self._index < len(self._plan) else None
-        if self._collecting and isinstance(step, Dot):
+        if not self._collecting:
+            return
+        if isinstance(step, Dot) and step.check:
+            self._checks.append((vector, self._target_px(step), self._index))
+        elif isinstance(step, Dot):
             group = self._group[(step.fx, step.fy)]
             self._samples.append((vector, self._target_px(step), group, self._index))
+        elif isinstance(step, Pursuit):
+            elapsed = t - self._phase_start - PURSUIT_LAG_S
+            if elapsed >= PURSUIT_SKIP_S:
+                self._pursuit.append((vector, step.at(elapsed, self._size)))
 
     def _begin(self, index: int, now: float) -> None:
         self._index = index
@@ -192,6 +259,14 @@ class Calibrator:
             self._view.message = step.text
             if step.spoken:
                 self._say(step.spoken)
+        elif isinstance(step, Fit):
+            self._view.target = None
+            self._view.message = "One moment…"
+        elif isinstance(step, Pursuit):
+            self._view.target = step.at(0.0, self._size)
+            self._view.radius = 14.0
+            self._view.message = ""
+            self._collecting = True
         else:
             self._view.target = self._target_px(step)
             self._view.message = ""
@@ -204,6 +279,18 @@ class Calibrator:
         if isinstance(step, Pause):
             if elapsed >= step.seconds:
                 self._advance(now)
+            return
+        if isinstance(step, Fit):
+            if elapsed >= 0.1:  # let "One moment…" draw first
+                if self._fit():
+                    self._advance(time.monotonic())
+            return
+        if isinstance(step, Pursuit):
+            if elapsed >= step.seconds(self._size):
+                self._advance(now)
+                return
+            self._view.target = step.at(elapsed, self._size)
+            self._view.setNeedsDisplay_(True)
             return
         if not self._camera.face_visible:
             self._view.message = "I can't see your face. Check the camera and lighting."
@@ -255,11 +342,10 @@ class Calibrator:
 
     def _finish(self) -> None:
         self._close()
-        usable = self._usable()
         if self._quick:
-            self._finish_recenter(usable)
+            self._finish_recenter(self._usable())
         else:
-            self._finish_full(usable)
+            self._finish_full()
 
     def _finish_recenter(self, usable: Samples | None) -> None:
         model = self._camera.model
@@ -273,21 +359,80 @@ class Calibrator:
             f"Re-centered. It was off by about {round(moved)} pixels.",
         )
 
-    def _finish_full(self, usable: Samples | None) -> None:
+    def _fit(self) -> bool:
+        """Fit candidate models on the dots so far (and the moving dot). False, after
+        reporting why, if that isn't possible."""
+        usable = self._usable()
         if usable is None or len(np.unique(usable.groups)) < MIN_COVERAGE * len(self._group):
+            self._close()
             self._done(None, "I couldn't see your eyes well enough. Let's try again later.")
-            return
+            return False
+        sets = [usable]
+        if self._pursuit:
+            sets.append(_with_pursuit(usable, self._pursuit))
         np.savez(
             self._camera.calibration_path.with_name("calibration_samples.npz"),
-            features=usable.features,
-            targets=usable.targets,
-            groups=usable.groups,
-            visits=usable.visits,
+            features=sets[-1].features,
+            targets=sets[-1].targets,
+            groups=sets[-1].groups,
+            visits=sets[-1].visits,
             screen=np.array(self._size),
         )
         try:
-            fitted = gaze_model.fit(usable.features, usable.targets, usable.groups, usable.visits)
+            self._candidates = [
+                gaze_model.fit(s.features, s.targets, s.groups, s.visits) for s in sets
+            ]
         except (ValueError, np.linalg.LinAlgError) as err:
+            self._close()
             self._done(None, f"Calibration failed: {err}")
+            return False
+        return True
+
+    def _finish_full(self) -> None:
+        model, checked = _pick(self._candidates, self._checks)
+        if model is None:
+            self._done(None, "Calibration failed.")
             return
-        self._done(fitted, f"Calibrated. Accuracy is about {round(fitted.cv_error_px)} pixels.")
+        if checked is None:
+            self._done(model, f"Calibrated. Accuracy is about {round(model.cv_error_px)} pixels.")
+            return
+        model = replace(model, checked_error_px=checked)
+        self._done(model, f"Calibrated. On the check it was off by about {round(checked)} pixels.")
+
+
+def _with_pursuit(usable: Samples, pursuit: list) -> Samples:
+    """`usable` plus the moving-dot samples, which only ever train (group -1)."""
+    n = len(pursuit)
+    return Samples(
+        features=np.vstack([usable.features, np.array([p[0] for p in pursuit])]),
+        targets=np.vstack([usable.targets, np.array([p[1] for p in pursuit], dtype=float)]),
+        groups=np.concatenate([usable.groups, np.full(n, -1)]),
+        visits=np.concatenate([usable.visits, np.full(n, -1)]),
+    )
+
+
+def check_error(model, checks: list) -> float | None:
+    """Mean distance between the model's average prediction and each check dot,
+    over the dots seen long enough; None if too few were."""
+    visits: dict[int, list] = {}
+    for vector, target, visit in checks:
+        visits.setdefault(visit, []).append((vector, target))
+    errors = []
+    for rows in visits.values():
+        if len(rows) < MIN_SAMPLES:
+            continue
+        predicted = model.predict(np.array([r[0] for r in rows])).mean(axis=0)
+        errors.append(float(np.linalg.norm(predicted - np.array(rows[0][1]))))
+    return float(np.mean(errors)) if len(errors) >= MIN_CHECK_DOTS else None
+
+
+def _pick(candidates: list, checks: list):
+    """The candidate with the lowest error on the check dots, and that error.
+    Without enough check data, the first (fixed dots only) candidate."""
+    if not candidates:
+        return None, None
+    scored = [(check_error(m, checks), m) for m in candidates]
+    if any(e is None for e, _ in scored):
+        return candidates[0], None
+    error, model = min(scored, key=lambda s: s[0])
+    return model, error

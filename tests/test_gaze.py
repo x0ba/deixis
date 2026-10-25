@@ -1,7 +1,9 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
-from peek.gaze import model
+from peek.gaze import drift, model
 from peek.gaze.features import (
     FEATURE_DIM,
     FEATURE_NAMES,
@@ -13,6 +15,9 @@ from peek.gaze.features import (
 )
 from peek.gaze.filter import OneEuro
 from peek.gaze.history import GazeHistory, fixations, primary
+from peek.gaze.tracker import CameraGaze
+from peek.screen.ax import Rect
+from peek.ui.calibration import PURSUIT_PX_S, Pursuit, _pick, check_error
 
 H = FEATURE_NAMES.index("r_h")
 V = FEATURE_NAMES.index("r_v")
@@ -220,3 +225,90 @@ def test_cv_error_is_per_visit_not_per_position():
     pooled = model.fit(feats, targets, groups)
     split = model.fit(feats, targets, groups, visits)
     assert split.cv_error_px > pooled.cv_error_px
+
+
+def test_training_only_samples_never_count_as_error():
+    rng = np.random.default_rng(4)
+    grid = [(x, y) for x in (100, 720, 1340) for y in (80, 450, 820)]
+    feats, targets, groups = synthetic(grid, rng)
+    extra, extra_targets, _ = synthetic([(400, 260), (1040, 640)], rng)
+    # Wildly wrong targets on training-only rows would wreck the error if they were tested.
+    feats = np.vstack([feats, extra])
+    targets = np.vstack([targets, extra_targets + 5000])
+    groups = np.concatenate([groups, np.full(len(extra), -1)])
+    fitted = model.fit(feats, targets, groups, groups.copy())
+    assert np.isfinite(fitted.cv_error_px)
+
+
+def test_checked_error_round_trips_and_wins(tmp_path):
+    rng = np.random.default_rng(5)
+    grid = [(x, y) for x in (100, 720, 1340) for y in (80, 450, 820)]
+    fitted = model.fit(*synthetic(grid, rng))
+    assert fitted.error_px == fitted.cv_error_px
+    path = tmp_path / "cal.npz"
+    fitted.save(path)
+    assert model.GazeModel.load(path).checked_error_px is None
+    checked = replace(fitted, checked_error_px=123.0)
+    checked.save(path)
+    assert model.GazeModel.load(path).error_px == 123.0
+
+
+def test_drift_shift_moves_part_way_and_ignores_big_misses():
+    predicted = np.tile([500.0, 300.0], (10, 1))
+    step = drift.shift(predicted, (540.0, 320.0), error_px=100.0)
+    np.testing.assert_allclose(step, [40 * drift.POINT_GAIN, 20 * drift.POINT_GAIN])
+    assert drift.shift(predicted, (1400.0, 300.0), error_px=100.0) is None
+    assert drift.shift(predicted[:2], (540.0, 320.0), error_px=100.0) is None
+
+
+def test_drift_shift_on_an_element_aims_at_its_nearest_point():
+    predicted = np.tile([500.0, 300.0], (10, 1))
+    inside = Rect(450, 280, 100, 40)
+    np.testing.assert_allclose(drift.shift(predicted, inside, error_px=100.0), [0, 0])
+    beside = Rect(560, 290, 40, 20)
+    np.testing.assert_allclose(
+        drift.shift(predicted, beside, error_px=100.0), [60 * drift.RECT_GAIN, 0]
+    )
+
+
+def test_camera_corrects_drift_from_recent_features(tmp_path):
+    rng = np.random.default_rng(6)
+    grid = [(x, y) for x in (100, 720, 1340) for y in (80, 450, 820)]
+    fitted = model.fit(*synthetic(grid, rng))
+    camera = CameraGaze(GazeHistory(), tmp_path / "face.task", tmp_path / "cal.npz")
+    camera.set_model(fitted)
+    probe, _, _ = synthetic([(600, 300)], rng, per_target=12)
+    for i, row in enumerate(probe):
+        camera._recent.append((10.0 + i / 30, row))
+    predicted = np.median(fitted.predict(probe), axis=0)
+    step = camera.correct_drift(9.0, 11.0, (predicted[0] + 50, predicted[1]))
+    assert step is not None and step[0] > 0
+    reloaded = model.GazeModel.load(tmp_path / "cal.npz")
+    np.testing.assert_allclose(reloaded.offset, camera.model.offset)
+    assert camera.correct_drift(20.0, 21.0, (0.0, 0.0)) is None
+
+
+def test_pursuit_moves_at_a_steady_speed_along_its_path():
+    size = (1000.0, 500.0)
+    path = Pursuit(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0)))
+    assert path.seconds(size) == pytest.approx(1500 / PURSUIT_PX_S)
+    assert path.at(0.0, size) == (0.0, 0.0)
+    assert path.at(500 / PURSUIT_PX_S, size) == pytest.approx((500.0, 0.0))
+    assert path.at(1250 / PURSUIT_PX_S, size) == pytest.approx((1000.0, 250.0))
+    assert path.at(99.0, size) == (1000.0, 500.0)
+
+
+def test_check_pass_picks_the_more_accurate_model():
+    rng = np.random.default_rng(7)
+    grid = [(x, y) for x in (100, 720, 1340) for y in (80, 450, 820)]
+    good = model.fit(*synthetic(grid, rng))
+    bad = replace(good, offset=np.array([200.0, 0.0]))
+    checks = []
+    for visit, target in enumerate([(300, 200), (1100, 200), (700, 700)]):
+        rows, _, _ = synthetic([target], rng, per_target=10)
+        checks += [(r, target, visit) for r in rows]
+    picked, error = _pick([bad, good], checks)
+    assert picked is good and error < 80
+    assert check_error(good, checks[:15]) is None  # too few dots seen
+    picked, error = _pick([bad, good], [])
+    assert picked is bad and error is None

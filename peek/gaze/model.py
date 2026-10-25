@@ -10,6 +10,9 @@ People hold their head still during calibration, so head pose barely varies
 and standardizing by its calibration spread would turn a later lean of a few
 centimeters into a huge input. Each pose feature's scale is floored at a
 typical posture change instead.
+
+Samples in group -1 (from following a moving dot) are only ever used for
+training: their targets are less exact, so errors are measured on fixed dots.
 """
 
 from dataclasses import dataclass, field, replace
@@ -67,6 +70,12 @@ class GazeModel:
     mask: np.ndarray = field(default_factory=lambda: np.ones(FEATURE_DIM))
     feature_set: str = "all"
     offset: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    checked_error_px: float | None = None  # measured on fresh dots after fitting
+
+    @property
+    def error_px(self) -> float:
+        """Typical distance between predicted and true gaze."""
+        return self.checked_error_px if self.checked_error_px is not None else self.cv_error_px
 
     def predict(self, features: np.ndarray) -> np.ndarray:
         single = features.ndim == 1
@@ -91,6 +100,7 @@ class GazeModel:
             mask=self.mask,
             feature_set=self.feature_set,
             offset=self.offset,
+            checked_error_px=np.nan if self.checked_error_px is None else self.checked_error_px,
             version=FEATURES_VERSION,
         )
 
@@ -103,6 +113,7 @@ class GazeModel:
             return None
         if data["mean"].shape != (FEATURE_DIM,):
             return None
+        checked = float(data["checked_error_px"]) if "checked_error_px" in data else np.nan
         return cls(
             mean=data["mean"],
             std=data["std"],
@@ -112,6 +123,7 @@ class GazeModel:
             mask=data["mask"],
             feature_set=str(data["feature_set"]),
             offset=data["offset"],
+            checked_error_px=checked if np.isfinite(checked) else None,
         )
 
 
@@ -119,7 +131,7 @@ def _cv_error(
     x: np.ndarray, targets: np.ndarray, groups: np.ndarray, visits: np.ndarray, alpha: float
 ) -> float:
     errors = []
-    for g in np.unique(groups):
+    for g in np.unique(groups[groups >= 0]):
         train, test = groups != g, groups == g
         w = _solve(x[train], targets[train], alpha)
         predicted = x[test] @ w
@@ -138,13 +150,14 @@ def fit(
     """Fit on (n, FEATURE_DIM) features and (n, 2) screen targets.
 
     `groups` identifies the screen position of each sample and is held out
-    together; `visits` identifies each separate look at a position (defaults
-    to `groups`) and is what the error is averaged over.
+    together (-1 marks training-only samples); `visits` identifies each
+    separate look at a position (defaults to `groups`) and is what the error
+    is averaged over.
     """
     visits = groups if visits is None else visits
     if not (len(features) == len(targets) == len(groups) == len(visits)):
         raise ValueError("features, targets, groups and visits must align")
-    if len(np.unique(groups)) < 4:
+    if len(np.unique(groups[groups >= 0])) < 4:
         raise ValueError("need at least 4 calibration targets")
     mean = features.mean(axis=0)
     std = features.std(axis=0)

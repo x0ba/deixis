@@ -44,7 +44,7 @@ can't hear you while it's talking, so you have to wait for it to finish.
 
 | Piece | What it uses |
 | --- | --- |
-| Eye tracking | Webcam + MediaPipe Face Landmarker (iris, eyelid blendshapes, head pose), a 25-dot calibration plus 9 more after a head shift, ridge regression with the feature set picked per calibration, a One Euro filter, and a blue outline around the control or text you're looking at. Or the pointer, for head-mouse and hardware eye-tracker users. |
+| Eye tracking | Webcam + MediaPipe Face Landmarker (iris, eyelid blendshapes, head pose), a 25-dot calibration plus 9 more after a head shift, a moving dot to follow, and 5 check dots that measure the real accuracy; ridge regression with the feature set picked per calibration; a One Euro filter; drift correction from your clicks; and a blue outline that goes to the control or text that has gathered the most gaze over the last fraction of a second, and only moves when another one clearly wins. Or the pointer, for head-mouse and hardware eye-tracker users. |
 | Listening | [Cartesia](https://www.cartesia.ai/) Ink-2 realtime STT with built-in turn detection, so there's no button to hold. |
 | Speaking | Cartesia Sonic 3.6, streamed. Falls back to macOS `say`. |
 | Context | macOS Accessibility: the window and element under your gaze, interactive elements near it (webcam gaze is off by 100-200 px), other places you looked while speaking, all windows, and an optional screenshot crop with your gaze marked. |
@@ -109,8 +109,9 @@ the menu bar.
 ### Calibration
 
 On first launch with the webcam, calibration starts by itself: look at each
-dot until it moves, and shift your head a little when asked. It takes about a
-minute. Esc cancels. Calibration is saved to
+dot until it moves, shift your head a little when asked, then follow a dot as
+it glides across the screen. A last few dots check how accurate the result
+is. It takes about a minute and a half. Esc cancels. Calibration is saved to
 `~/Library/Application Support/Peek/calibration.npz`, and the raw samples
 next to it in `calibration_samples.npz`.
 
@@ -123,7 +124,9 @@ at your answer. If the outline keeps landing next to
 what you're looking at (you moved your chair, the light changed), say
 "Peek, re-center" and look at a single dot. That fixes a steady offset in
 two seconds. Recalibrate fully if it's off in different ways in different
-places.
+places. Clicking also helps: each time you click with the mouse or a wink,
+Peek assumes you were looking at what you clicked and nudges the tracking a
+little toward it.
 
 Peek lives in the menu bar (the eye icon), with Pause, Calibrate Eyes,
 Re-center Eyes, Show Highlight, Gaze Source and Quit.
@@ -131,7 +134,8 @@ Re-center Eyes, Show Highlight, Gaze Source and Quit.
 ## Your first five minutes
 
 1. Start Peek and follow the calibration dots. At the end Peek tells you its
-   accuracy in pixels; 100 to 200 is typical for a webcam.
+   accuracy in pixels, measured on the check dots at the end; 100 to 200 is
+   typical for a webcam.
 2. Look around the screen. The blue outline follows your eyes. That's what
    Peek will act on when you say "this".
 3. Look at a window and say **"Peek, make this full screen."** You hear a tink
@@ -169,6 +173,7 @@ All optional, in `.env`. See `.env.example`.
 | `PEEK_CONVERSATION_S` | `15` | how long Peek keeps listening without the wake word after an exchange |
 | `PEEK_SOUNDS` | `true` | the tink and pop when a conversation starts and ends |
 | `PEEK_WINK_CLICK` | `true` | wink one eye to click what's outlined (webcam only) |
+| `PEEK_LEARN_FROM_CLICKS` | `true` | when you click with the mouse or a wink, nudge the eye tracking toward what you clicked, so it stays accurate without re-centering |
 | `PEEK_CAMERA` | `0` | which camera to use if you have more than one |
 | `PEEK_VOICE_ID` | a Cartesia stock voice | |
 
