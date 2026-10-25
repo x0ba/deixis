@@ -88,6 +88,35 @@ All through the Python SDK (`cartesia[websockets]` 4.2).
   cancels the context.
 - **Stock voices**, picked with `PEEK_VOICE_ID`.
 
+### Guardrails
+
+Claude decides how to carry out a request, within these limits:
+
+- **It asks before destructive actions it isn't sure about.** Before closing,
+  sending or deleting something ambiguous (a window with unsaved changes, one
+  of two similar messages), Claude uses an `ask` tool. Peek says the question
+  out loud ("Close it without saving?") and waits up to 30 seconds for your
+  answer. If you don't answer, Claude is told so instead of assuming yes.
+- **It can only use the screen.** Its tools are windows, typing, clicking,
+  keys, scrolling, reading text, opening apps and links, asking you, and
+  recalibrating. It has no shell or file access, so everything it does goes
+  through the same controls you'd use.
+- **It does only what you asked**, in as few steps as possible. Text you
+  dictate is typed exactly as you said it.
+- **It reads a control's state before pressing it.** A button labelled
+  "Liked" or "Unlike" means the post is already liked, so "like this" won't
+  undo it.
+- **It stays out of conversations that aren't for it.** If something you
+  said without the wake word clearly wasn't meant for Peek, Claude replies
+  with a silent marker and Peek does nothing.
+- **You can always stop it.** "Stop", "wait" and "never mind" are handled by
+  Peek itself, not Claude, and cancel the request between steps. Claude is
+  told you stopped it, so it won't pick the job back up unless you ask.
+- **Requests are capped at 10 steps.** Past that, Peek stops and says so.
+
+Peek's own code enforces the tool list, stopping and the step cap. The rest
+are instructions to Claude, so they usually hold, but nothing guarantees it.
+
 ## Setup
 
 ### What you need
