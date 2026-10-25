@@ -6,13 +6,15 @@ Main thread only.
 import AppKit
 import objc
 
-from deixis.screen.ax import Rect
-from deixis.screen.desktop import screens
+from peek.screen.ax import Rect
+from peek.screen.desktop import screens
 
 HIGHLIGHT_RGB = (0.04, 0.52, 1.0)
 HIGHLIGHT_PAD = 4.0
 HIGHLIGHT_MOVE_S = 0.09
 PILL_W, PILL_H = 640.0, 64.0
+PILL_TEXT_X, PILL_PAD_Y = 54.0, 17.0
+PILL_MAX_LINES = 4
 
 COLORS = {
     "idle": (0.55, 0.55, 0.6),
@@ -69,25 +71,52 @@ class PillView(AppKit.NSView):
 
     def drawRect_(self, rect):
         bounds = self.bounds()
+        h = bounds.size.height
+        radius = min(h / 2, PILL_H / 2)
         path = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            bounds, bounds.size.height / 2, bounds.size.height / 2
+            bounds, radius, radius
         )
         AppKit.NSColor.colorWithCalibratedWhite_alpha_(0.08, 0.88).setFill()
         path.fill()
-        dot = AppKit.NSMakeRect(22, bounds.size.height / 2 - 9, 18, 18)
+        # The dot sits beside the first line of text.
+        dot = AppKit.NSMakeRect(22, h - PILL_H / 2 - 9, 18, 18)
         _rgba(self.rgb, 1.0).setFill()
         AppKit.NSBezierPath.bezierPathWithOvalInRect_(dot).fill()
-        style = AppKit.NSMutableParagraphStyle.alloc().init()
-        style.setLineBreakMode_(AppKit.NSLineBreakByTruncatingHead)
-        attrs = {
-            AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_weight_(
-                22, AppKit.NSFontWeightMedium
-            ),
-            AppKit.NSForegroundColorAttributeName: AppKit.NSColor.whiteColor(),
-            AppKit.NSParagraphStyleAttributeName: style,
-        }
-        text_rect = AppKit.NSMakeRect(54, bounds.size.height / 2 - 15, bounds.size.width - 76, 30)
-        AppKit.NSString.stringWithString_(self.message).drawInRect_withAttributes_(text_rect, attrs)
+        text_rect = AppKit.NSMakeRect(
+            PILL_TEXT_X, PILL_PAD_Y, bounds.size.width - PILL_TEXT_X - 22, h - 2 * PILL_PAD_Y
+        )
+        AppKit.NSString.stringWithString_(self.message).drawWithRect_options_attributes_(
+            text_rect,
+            AppKit.NSStringDrawingUsesLineFragmentOrigin
+            | AppKit.NSStringDrawingTruncatesLastVisibleLine,
+            _text_attrs(),
+        )
+
+
+def _text_attrs() -> dict:
+    style = AppKit.NSMutableParagraphStyle.alloc().init()
+    style.setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+    return {
+        AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_weight_(
+            22, AppKit.NSFontWeightMedium
+        ),
+        AppKit.NSForegroundColorAttributeName: AppKit.NSColor.whiteColor(),
+        AppKit.NSParagraphStyleAttributeName: style,
+    }
+
+
+def _pill_height(message: str) -> float:
+    """Tall enough for the wrapped message, up to PILL_MAX_LINES lines."""
+    attrs = _text_attrs()
+    width = PILL_W - PILL_TEXT_X - 22
+    text = AppKit.NSString.stringWithString_(message or " ")
+    options = AppKit.NSStringDrawingUsesLineFragmentOrigin
+    bounds = text.boundingRectWithSize_options_attributes_((width, 10_000), options, attrs)
+    needed = bounds.size.height
+    line = attrs[AppKit.NSFontAttributeName]
+    line_h = line.ascender() - line.descender() + line.leading()
+    text_h = min(needed, line_h * PILL_MAX_LINES)
+    return max(PILL_H, text_h + 2 * PILL_PAD_Y)
 
 
 class Overlay:
@@ -108,7 +137,8 @@ class Overlay:
         visible = found[0].visible
         x = visible.x + (visible.w - PILL_W) / 2
         top = visible.y + 14
-        self._pill_window.setFrameOrigin_((x, self._main_h - top - PILL_H))
+        h = self._pill_window.frame().size.height
+        self._pill_window.setFrameOrigin_((x, self._main_h - top - h))
 
     def set_highlight_enabled(self, enabled: bool) -> None:
         self._highlight_enabled = enabled
@@ -142,6 +172,9 @@ class Overlay:
         self._pill.message = message
         self._pill.setNeedsDisplay_(True)
         if message:
+            h = _pill_height(message)
+            self._pill_window.setContentSize_((PILL_W, h))
+            self._pill.setFrame_(AppKit.NSMakeRect(0, 0, PILL_W, h))
             self._place_pill()
             self._pill_window.orderFrontRegardless()
         else:

@@ -1,8 +1,8 @@
 import random
 
-from deixis.screen.ax import Rect
-from deixis.screen.snap import Snapper, ring, search_rings
-from deixis.ui.calibration import FULL_PLAN, GRID, HEAD_GRID, RECENTER_PLAN, Dot
+from peek.screen.ax import Rect
+from peek.screen.snap import Snapper, ring, search_rings
+from peek.ui.calibration import FULL_PLAN, GRID, HEAD_GRID, RECENTER_PLAN, Dot
 
 BUTTON = Rect(500, 300, 80, 24)
 LINK = Rect(500, 380, 80, 24)

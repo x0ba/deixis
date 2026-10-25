@@ -2,8 +2,11 @@
 
 The microphone streams continuously into the auto-finalize socket. Cartesia
 tells us when a turn starts (the moment to sample gaze) and when it ends
-(the moment to act). While Deixis is speaking the mic sends silence instead,
-so it never transcribes its own voice; the API expects a continuous stream.
+(the moment to act). The mic stays live while Peek is speaking so the user
+can interrupt; the app strips Peek's own voice from those transcripts. When
+`muted` is set the mic sends silence instead, since the API expects a
+continuous stream. A noise gate replaces background noise with silence the
+same way.
 """
 
 import asyncio
@@ -16,6 +19,8 @@ from dataclasses import dataclass
 import numpy as np
 import sounddevice as sd
 from cartesia import AsyncCartesia
+
+from peek.voice.gate import NoiseGate
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +45,7 @@ class Listener:
         on_partial: Callable[[str], None],
         on_turn: Callable[[Turn], None],
         on_status: Callable[[str], None],
+        noise_gate_db: float = 12.0,
     ):
         self._client = AsyncCartesia(api_key=api_key)
         self._keyterms = keyterms
@@ -54,6 +60,7 @@ class Listener:
         self._stop = threading.Event()
         self._turn_started: float | None = None
         self.level = 0.0
+        self._gate = NoiseGate(margin_db=noise_gate_db) if noise_gate_db > 0 else None
 
     def start(self) -> None:
         threading.Thread(
@@ -63,12 +70,21 @@ class Listener:
     def stop(self) -> None:
         self._stop.set()
 
+    @property
+    def turn_started(self) -> float | None:
+        """When the turn in progress began, or None if nobody is talking."""
+        return self._turn_started
+
     def _mic_callback(self, indata, frames, time_info, status) -> None:
         data = bytes(indata)
         if self.muted.is_set() or self.paused.is_set():
             data = SILENCE[: len(data)]
+            if self._gate is not None:
+                self._gate.reset()
         else:
             self.level = float(np.abs(np.frombuffer(data, dtype=np.int16)).max(initial=0)) / 32768
+            if self._gate is not None:
+                data = self._gate.process(data)
         if self._queue is not None:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
 

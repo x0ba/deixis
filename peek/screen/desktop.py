@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import AppKit
 import Quartz
 
-from deixis.screen.ax import Rect
+from peek.screen.ax import Rect
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ def screen_for(rect: Rect) -> Screen | None:
 
 
 def windows() -> list[WindowInfo]:
-    """Normal app windows, front to back, excluding Deixis's own overlays."""
+    """Normal app windows, front to back, excluding Gaze's own overlays."""
     options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
     raw = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
     me = os.getpid()

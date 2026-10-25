@@ -13,10 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
-from deixis.gaze import features as feat
-from deixis.gaze.filter import OneEuro
-from deixis.gaze.history import GazeHistory
-from deixis.gaze.model import GazeModel
+from peek.gaze import features as feat
+from peek.gaze.filter import OneEuro
+from peek.gaze.history import GazeHistory
+from peek.gaze.model import GazeModel
 
 log = logging.getLogger(__name__)
 

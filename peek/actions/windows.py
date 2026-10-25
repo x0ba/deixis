@@ -6,8 +6,8 @@ side by side on the same screen instead.
 
 import time
 
-from deixis.screen import ax, desktop
-from deixis.screen.ax import Rect
+from peek.screen import ax, desktop
+from peek.screen.ax import Rect
 
 
 class ActionError(Exception):

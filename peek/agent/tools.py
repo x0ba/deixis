@@ -3,12 +3,13 @@
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
-from deixis.actions import input as inp
-from deixis.actions import windows as win
-from deixis.actions.windows import ActionError
-from deixis.screen import ax
-from deixis.screen.context import Registry, Snapshot
+from peek.actions import input as inp
+from peek.actions import windows as win
+from peek.actions.windows import ActionError
+from peek.screen import ax
+from peek.screen.context import Registry, Snapshot, describe
 
 WINDOW_ACTIONS = [
     "fullscreen",
@@ -148,6 +149,19 @@ TOOLS = [
         },
     },
     {
+        "name": "ask",
+        "description": "Say a short question out loud and wait for the user's spoken answer. "
+        "Use it whenever you need something from them before you can go on: which one they "
+        "mean, a missing detail, or a yes before something destructive. The result has "
+        "their answer and, if they looked at something while answering, that element (its "
+        "new id works with the other tools). Earlier ids keep working.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"question": {"type": "string"}},
+            "required": ["question"],
+        },
+    },
+    {
         "name": "refresh_context",
         "description": "Re-read the screen at the user's current gaze, e.g. to check the "
         "result of an action or after something opened. Ids from earlier snapshots stop "
@@ -187,16 +201,27 @@ def _full_text(element) -> str:
     return joined[:6000] or "(no readable text)"
 
 
+@dataclass
+class Answer:
+    """What the user said back to a question, and what they looked at meanwhile."""
+
+    text: str
+    element: object | None = None
+    point: tuple[float, float] | None = None
+
+
 class Executor:
     def __init__(
         self,
         snapshot: Snapshot,
         refresh: Callable[[], Snapshot],
         recalibrate: Callable[[bool], None],
+        ask: Callable[[str], Answer | None] = lambda _: None,
     ):
         self.snapshot = snapshot
         self._refresh = refresh
         self._recalibrate = recalibrate
+        self._ask = ask
 
     @property
     def registry(self) -> Registry:
@@ -257,6 +282,8 @@ class Executor:
                 return inp.open_app(args["name"]), None
             if name == "open_url":
                 return inp.open_url(args["url"]), None
+            if name == "ask":
+                return self._run_ask(args["question"]), None
             if name == "refresh_context":
                 time.sleep(0.3)
                 self.snapshot = self._refresh()
@@ -270,3 +297,18 @@ class Executor:
             return f"error: {err}", None
         except KeyError as err:
             return f"error: missing argument {err}", None
+
+    def _run_ask(self, question: str) -> str:
+        answer = self._ask(question)
+        if answer is None:
+            return "(no answer: the user didn't reply)"
+        out: dict = {"answer": answer.text}
+        if answer.element is not None:
+            x, y = answer.point or (None, None)
+            out["looking_at_while_answering"] = describe(answer.element, self.registry, x, y)
+        if answer.point is not None:
+            for key, info in self.registry.window_info.items():
+                if info.bounds.contains(*answer.point):
+                    out["window_while_answering"] = key
+                    break
+        return json.dumps(out)

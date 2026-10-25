@@ -17,7 +17,7 @@ import AppKit
 import numpy as np
 import objc
 
-from deixis.gaze import model as gaze_model
+from peek.gaze import model as gaze_model
 
 SETTLE_S = 0.8
 COLLECT_S = 1.0

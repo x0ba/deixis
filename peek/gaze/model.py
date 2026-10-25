@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from deixis.gaze.features import FEATURE_DIM, FEATURE_NAMES, FEATURES_VERSION, LOOK_BLENDSHAPES
+from peek.gaze.features import FEATURE_DIM, FEATURE_NAMES, FEATURES_VERSION, LOOK_BLENDSHAPES
 
 ALPHAS = (0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0)
 MIN_STD = {"yaw": 0.05, "pitch": 0.05, "roll": 0.05, "tx": 1.5, "ty": 1.5, "tz": 3.0}

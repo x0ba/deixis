@@ -14,8 +14,8 @@ from pathlib import Path
 
 import Quartz
 
-from deixis.gaze.history import Fixation
-from deixis.screen import ax, desktop
+from peek.gaze.history import Fixation
+from peek.screen import ax, desktop
 
 log = logging.getLogger(__name__)
 

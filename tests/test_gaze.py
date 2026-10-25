@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from deixis.gaze import model
-from deixis.gaze.features import (
+from peek.gaze import model
+from peek.gaze.features import (
     FEATURE_DIM,
     FEATURE_NAMES,
     LEFT_EYE,
@@ -11,8 +11,8 @@ from deixis.gaze.features import (
     eye_ratios,
     head_pose,
 )
-from deixis.gaze.filter import OneEuro
-from deixis.gaze.history import GazeHistory, fixations, primary
+from peek.gaze.filter import OneEuro
+from peek.gaze.history import GazeHistory, fixations, primary
 
 H = FEATURE_NAMES.index("r_h")
 V = FEATURE_NAMES.index("r_v")

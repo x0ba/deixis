@@ -10,8 +10,8 @@ import time
 import AppKit
 import Quartz
 
-from deixis.actions.windows import ActionError
-from deixis.screen import ax, desktop
+from peek.actions.windows import ActionError
+from peek.screen import ax, desktop
 
 KEYCODES = {
     "a": 0,

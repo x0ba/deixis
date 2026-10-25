@@ -12,8 +12,8 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from deixis.screen import ax, desktop
-from deixis.screen.ax import Rect
+from peek.screen import ax, desktop
+from peek.screen.ax import Rect
 
 SMOOTH_S = 0.25
 REQUERY_PX = 16.0

@@ -1,20 +1,25 @@
 import pytest
 
-from deixis.wake import split_command
+from peek.wake import split_command
 
-WAKE = ["deixis", "hey computer"]
+WAKE = ["peek", "hey computer"]
 
 
 @pytest.mark.parametrize(
     ("transcript", "expected"),
     [
-        ("Deixis, close this window.", "close this window."),
-        ("Dixie's make this full screen", "make this full screen"),
-        ("Daxis type hello world", "type hello world"),
-        ("hey Deixis, what's this?", "what's this?"),
+        ("Peek, close this window.", "close this window."),
+        ("Peek's make this full screen", "make this full screen"),
+        ("Peak type hello world", "type hello world"),
+        ("hey Peek, what's this?", "what's this?"),
         ("Hey computer split these two", "split these two"),
-        ("Deixis.", ""),
-        ("Deixis", ""),
+        ("Peek.", ""),
+        ("Peek", ""),
+        ("It's like so loud over here. Peek.", ""),
+        ("navigate, wait, peek.", ""),
+        ("what the heck? Hey Peek, can you create an API key?", "can you create an API key?"),
+        ("Wait, wait, wait, wait. Hey Peek.", ""),
+        ("Peek. You can scan it now. Yeah.", "You can scan it now. Yeah."),
     ],
 )
 def test_finds_command_after_wake_word(transcript, expected):
@@ -26,7 +31,8 @@ def test_finds_command_after_wake_word(transcript, expected):
     [
         "I was telling her about the meeting",
         "close this window",
-        "the word deixis comes from Greek",
+        "let me take a peek at the window",
+        "I said she took a peek. Then she left.",
         "",
     ],
 )
